@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Existing app loads Tailwind/Lucide/Google Fonts from CDN (see index.html <head>).
+         INTERNET permission is required to preserve that EXISTING behavior unchanged. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Required so the app appears in Play/appears correctly on devices without USB host,
+         but android:required="false" lets it still install anywhere. -->
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false" />
+
+    <application
+        android:allowBackup="true"
+        android:label="SENTINEL V17 ELITE-PRO"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.Sentinel"
+        android:usesCleartextTraffic="false"
+        android:hardwareAccelerated="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Lets Android auto-launch this app when an Arduino/USB-serial device
+                 is plugged in via OTG, so the user doesn't have to find the app first. -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/usb_device_filter" />
+        </activity>
+    </application>
+</manifest>

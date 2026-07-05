@@ -1,0 +1,86 @@
+name: Android Debug Build
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: android
+
+jobs:
+  build-debug-apk:
+    name: Build Debug APK
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+
+    steps:
+      # ── Checkout the repository exactly as-is ──
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Install JDK 17 (Temurin), required by Android Gradle Plugin 8+ ──
+      - name: Set up JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # ── Cache Gradle wrapper distributions and dependency caches to speed up future runs ──
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/wrapper
+            ~/.gradle/caches
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties', 'android/**/*.gradle*') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      # ── Ensure gradlew is executable (git may not preserve the executable bit) ──
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      # ── Safety net: if gradle-wrapper.jar is missing (e.g. not committed to the repo),
+      #     regenerate it using the properties already defined in gradle-wrapper.properties,
+      #     WITHOUT altering any existing project file. ──
+      - name: Ensure Gradle Wrapper jar is present
+        run: |
+          if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+            echo "gradle-wrapper.jar not found — generating it now via installed Gradle."
+            if ! command -v gradle >/dev/null 2>&1; then
+              echo "No system Gradle found; installing temporarily via SDKMAN to regenerate the wrapper."
+              curl -s "https://get.sdkman.io" | bash
+              source "$HOME/.sdkman/bin/sdkman-init.sh"
+              sdk install gradle 8.4
+            fi
+            gradle wrapper --gradle-version 8.4
+            chmod +x ./gradlew
+          else
+            echo "gradle-wrapper.jar already present — skipping generation."
+          fi
+
+      # ── Build the Debug APK using the project's own Gradle wrapper and build logic ──
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
+
+      # ── Upload the resulting APK as a downloadable GitHub Actions artifact ──
+      - name: Upload Debug APK artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

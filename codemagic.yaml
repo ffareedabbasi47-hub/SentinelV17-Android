@@ -1,0 +1,27 @@
+workflows:
+  android-usb-otg-debug:
+    name: SentinelV17 Android USB OTG - Debug APK
+    max_build_duration: 30
+    instance_type: linux_x2
+    environment:
+      vars:
+        PACKAGE_NAME: "com.fardeen.sentinel"
+      java: 17
+    scripts:
+      - name: Ensure Gradle Wrapper jar is present
+        script: |
+          cd android
+          chmod +x ./gradlew
+          if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+            gradle wrapper --gradle-version 8.4
+          fi
+      - name: Build Debug APK
+        script: |
+          cd android
+          ./gradlew assembleDebug --stacktrace
+    artifacts:
+      - android/app/build/outputs/apk/debug/*.apk
+    publishing:
+      email:
+        recipients:
+          - ffareedabbasi47@gmail.com

@@ -1,0 +1,2 @@
+rootProject.name = "SentinelV17"
+include ':app'

@@ -1,0 +1,3272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>SENTINEL V17 ELITE-PRO | Fardeen Abbasi</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+
+        :root {
+            --neon:   #06b6d4;
+            --danger: #ef4444;
+            --warn:   #f59e0b;
+            --ok:     #22c55e;
+            --bg:     #020617;
+            --panel:  rgba(15, 23, 42, 0.92);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background-color: var(--bg);
+            color: #f1f5f9;
+            height: 100dvh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            margin: 0;
+            border: 2px solid rgba(6,182,212,0.25);
+        }
+
+        /* CRT scanline overlay */
+        body::after {
+            content: '';
+            position: fixed; inset: 0;
+            pointer-events: none;
+            background:
+                linear-gradient(rgba(0,0,0,0) 50%, rgba(0,0,0,0.07) 50%),
+                linear-gradient(90deg,rgba(255,0,0,0.02),rgba(0,255,0,0.01),rgba(0,0,255,0.02));
+            background-size: 100% 3px, 3px 100%;
+            z-index: 200;
+        }
+
+        /* Tactical grid background */
+        .tac-grid {
+            position: fixed; inset: 0;
+            background-image:
+                linear-gradient(to right, #0c2d3a 1px, transparent 1px),
+                linear-gradient(to bottom, #0c2d3a 1px, transparent 1px);
+            background-size: 32px 32px;
+            opacity: 0.18;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid rgba(6,182,212,0.22);
+            border-radius: 6px;
+        }
+
+        /* ── Radar sweep ── */
+        #radar-sweep {
+            position: absolute; inset: 0;
+            transform-origin: center;
+            opacity: 0;
+            transition: opacity 0.8s ease-in-out;
+            will-change: transform, opacity;
+            /* HARDENING PATCH: contain:strict prevents this element's transforms
+               from triggering ancestor reflow — keeps sweep on compositor (F2, B6) */
+            contain: strict;
+        }
+        .sweep-fan {
+            position: absolute;
+            top: 0; left: 50%;
+            width: 50%; height: 50%;
+            transform-origin: bottom left;
+            background: conic-gradient(from 0deg at 0% 100%, rgba(6,182,212,0.55) 0%, transparent 50deg);
+            border-top: 2px solid var(--neon);
+            border-radius: 100% 0 0 0;
+            /* BUG FIX: drop-shadow on child caused GPU re-rasterise every frame.
+               Removed — parent will-change:transform already handles compositing. */
+        }
+
+        /* ── Blip ── */
+        #target-blip {
+            position: absolute;
+            left: 0; top: 0;
+            width: 0; height: 0;
+            pointer-events: none;
+            z-index: 60;
+            /* PATCH 5: compositor-layer promotion. left/top layout replaced
+               by transform:translate() in JS — no layout reflow on Android. */
+            will-change: transform;
+        }
+        #blip-inner {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            display: flex; align-items: center; justify-content: center;
+        }
+        .blip-box {
+            position: absolute;
+            width: 36px; height: 36px;
+            border: 2px solid var(--danger);
+            border-radius: 3px;
+            animation: blipPulse 0.6s ease-in-out infinite alternate;
+            /* BUG FIX: animation was always running even when blip was hidden,
+               burning CPU/GPU. Paused by default; resumed via .blip-active class. */
+            animation-play-state: paused;
+        }
+        #target-blip.blip-active .blip-box {
+            animation-play-state: running;
+        }
+        .blip-dot {
+            width: 10px; height: 10px;
+            background: var(--danger);
+            border-radius: 50%;
+            /* HARDENING PATCH: replaced box-shadow with filter:drop-shadow (F4)
+               box-shadow triggers a per-frame repaint on Android GPU compositing path.
+               filter:drop-shadow is handled in the GPU paint step on Chrome and avoids
+               the high-frequency repaint cost during the blipPulse animation. */
+            filter: drop-shadow(0 0 6px var(--danger)) drop-shadow(0 0 14px rgba(239,68,68,0.45));
+        }
+        @keyframes blipPulse {
+            from { opacity: 1;   transform: scale(1);    }
+            to   { opacity: 0.4; transform: scale(1.25); }
+        }
+
+        /* ── Shake on fire ── */
+        .shaking { animation: shake 0.08s linear infinite; }
+        @keyframes shake {
+            0%   { transform: translate(1px,1px);   }
+            33%  { transform: translate(-1px,-2px);  }
+            66%  { transform: translate(2px,-1px);   }
+            100% { transform: translate(-1px,2px);   }
+        }
+
+        /* ── Range slider ── */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%; height: 6px;
+            background: #0f172a;
+            border: 1px solid rgba(6,182,212,0.4);
+            border-radius: 4px;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px; height: 20px;
+            background: var(--neon);
+            border: 2px solid #fff;
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--neon);
+            cursor: pointer;
+        }
+
+        /* ── Toggle switch ── */
+        .toggle-track {
+            width: 40px; height: 20px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 999px;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.2s, border-color 0.2s;
+        }
+        .toggle-track.on {
+            background: rgba(239,68,68,0.25);
+            border-color: var(--danger);
+        }
+        .toggle-knob {
+            position: absolute;
+            top: 2px; left: 2px;
+            width: 14px; height: 14px;
+            background: #475569;
+            border-radius: 50%;
+            transition: transform 0.2s, background 0.2s, box-shadow 0.2s;
+        }
+        .toggle-track.on .toggle-knob {
+            transform: translateX(20px);
+            background: var(--danger);
+            box-shadow: 0 0 8px var(--danger);
+        }
+
+        /* ── Radar wrapper ── */
+        #radar-wrapper { max-height: 36vh; }
+
+        /* ── Status dot ── */
+        .status-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        /* ── SIREN indicator ── */
+        #siren-indicator {
+            display: none;
+            animation: sirenBlink 0.4s linear infinite alternate;
+        }
+        @keyframes sirenBlink {
+            from { opacity: 1; }
+            to   { opacity: 0.1; }
+        }
+
+        /* ── GHOST REFLECTION blips — realism ── */
+        .ghost-blip {
+            position: absolute;
+            width: 4px; height: 4px;
+            border-radius: 50%;
+            background: rgba(6,182,212,0.18);
+            pointer-events: none;
+            z-index: 55;
+            /* HARDENING PATCH: promote to compositor layer to avoid repaint on move (F4) */
+            will-change: transform, opacity;
+        }
+
+        /* ── NOISE canvas — realism ── */
+        #radar-noise {
+            position: absolute; inset: 0;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 52;
+            opacity: 0.6;
+        }
+
+        /* ── BOOT OVERLAY — staged initialization, inside radar-circle ── */
+        #boot-overlay {
+            position: absolute; inset: 0;
+            border-radius: 50%;
+            background: rgba(2,6,23,0.90);
+            z-index: 80;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 5px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.35s ease;
+        }
+        #boot-overlay.visible { opacity: 1; }
+        #boot-stage {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 7px; font-weight: 700;
+            color: var(--neon);
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            text-align: center;
+        }
+        #boot-bar-wrap {
+            width: 55%; height: 2px;
+            background: rgba(6,182,212,0.12);
+            border-radius: 2px; overflow: hidden;
+        }
+        #boot-bar {
+            height: 100%; width: 0%;
+            background: var(--neon); border-radius: 2px;
+            transition: width 0.3s linear;
+        }
+
+        /* ── HOLD-TO-FIRE bar ── */
+        #hold-ring {
+            position: absolute;
+            bottom: 0; left: 0;
+            height: 3px; width: 0%;
+            background: var(--danger);
+            transition: width 0.04s linear;
+            box-shadow: 0 0 5px var(--danger);
+            border-radius: 0 2px 2px 0;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body class="p-2 gap-2 flex flex-col">
+<div class="tac-grid"></div>
+
+<!-- ══════════════════════════════════════════════
+     HEADER
+══════════════════════════════════════════════ -->
+<header class="panel p-2 flex justify-between items-center shrink-0 z-[110]">
+    <div class="flex items-center gap-2">
+        <i data-lucide="shield-alert" class="text-cyan-400 w-5 h-5 shrink-0"></i>
+        <div>
+            <h1 class="text-[10px] font-black uppercase italic tracking-tight leading-none">
+                SENTINEL <span class="text-cyan-400">V17 ELITE-PRO</span>
+            </h1>
+            <p class="text-[6px] text-slate-500 font-bold uppercase tracking-widest">Fardeen Abbasi · 9th Class</p>
+            <p id="link-status" class="text-[7px] text-red-500 font-bold uppercase animate-pulse mt-0.5">
+                ● LINK: DISCONNECTED
+            </p>
+        </div>
+    </div>
+    <button id="usb-btn"
+        class="px-3 py-1.5 bg-slate-900 border border-amber-500/50 text-amber-400 text-[8px] font-bold rounded uppercase active:scale-95 transition-all">
+        ⚡ Link USB OTG
+    </button>
+    <button id="bt-btn"
+        class="px-3 py-1.5 bg-slate-900 border border-cyan-500/50 text-cyan-400 text-[8px] font-bold rounded uppercase active:scale-95 transition-all">
+        ⚡ Link BT
+    </button>
+</header>
+
+<!-- ══════════════════════════════════════════════
+     STATS ROW
+══════════════════════════════════════════════ -->
+<div class="flex gap-2 shrink-0 z-50">
+    <div class="flex-1 panel p-1.5 text-center border-l-2 border-l-cyan-500">
+        <span class="text-[6px] text-slate-500 block uppercase font-bold tracking-widest">Azimuth</span>
+        <span id="txt-angle" class="text-base font-black text-cyan-400">0.0°</span>
+    </div>
+    <div class="flex-1 panel p-1.5 text-center border-l-2 border-l-red-500">
+        <span class="text-[6px] text-slate-500 block uppercase font-bold tracking-widest">Distance</span>
+        <span id="txt-dist" class="text-base font-black text-slate-600 uppercase">---</span>
+    </div>
+    <div class="flex-1 panel p-1.5 text-center border-l-2 border-l-emerald-500">
+        <span class="text-[6px] text-slate-500 block uppercase font-bold tracking-widest">Status</span>
+        <span id="txt-status" class="text-base font-black text-slate-600 uppercase">OFF</span>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     RADAR
+══════════════════════════════════════════════ -->
+<main id="radar-wrapper" class="flex-1 flex items-center justify-center relative min-h-0 z-10">
+    <div id="radar-circle"
+        class="relative h-full aspect-square max-w-[220px] rounded-full border border-cyan-500/25 bg-slate-950/60 flex items-center justify-center">
+
+        <!-- Sweep persistence trail canvas -->
+        <canvas id="sweep-trail" style="position:absolute;inset:0;border-radius:50%;pointer-events:none;z-index:53;opacity:0.55;will-change:contents;"></canvas>
+
+        <!-- Sweep -->
+        <div id="radar-sweep">
+            <div class="sweep-fan"></div>
+        </div>
+
+        <!-- Blip -->
+        <div id="target-blip" class="hidden">
+            <div id="blip-inner">
+                <div class="blip-box"></div>
+                <div class="blip-dot"></div>
+            </div>
+        </div>
+
+        <!-- Ghost reflections container — realism -->
+        <div id="ghost-container"></div>
+
+        <!-- Noise canvas — subtle signal noise -->
+        <canvas id="radar-noise"></canvas>
+
+        <!-- Boot overlay — staged initialization -->
+        <div id="boot-overlay">
+            <div id="boot-stage">INITIALISING...</div>
+            <div id="boot-bar-wrap"><div id="boot-bar"></div></div>
+        </div>
+
+        <!-- Siren indicator (centre) -->
+        <div id="siren-indicator" class="absolute inset-0 rounded-full border-4 border-red-500 z-40 pointer-events-none"></div>
+
+        <!-- Range rings -->
+        <div class="absolute inset-0     rounded-full border border-cyan-400/8  pointer-events-none"></div>
+        <div class="absolute inset-[22%] rounded-full border border-cyan-400/8  pointer-events-none"></div>
+        <div class="absolute inset-[44%] rounded-full border border-cyan-400/12 pointer-events-none"></div>
+        <div class="absolute inset-[66%] rounded-full border border-cyan-400/15 pointer-events-none"></div>
+
+        <!-- Cross-hair lines -->
+        <div class="absolute inset-0 flex items-center pointer-events-none">
+            <div class="w-full h-px bg-cyan-500/8"></div>
+        </div>
+        <div class="absolute inset-0 flex justify-center pointer-events-none">
+            <div class="h-full w-px bg-cyan-500/8"></div>
+        </div>
+    </div>
+</main>
+
+<!-- ══════════════════════════════════════════════
+     FOOTER CONTROLS
+══════════════════════════════════════════════ -->
+<footer class="mt-auto space-y-1.5 p-2 bg-slate-950/80 border-t border-cyan-500/20 shrink-0 z-[120]">
+
+    <!-- AI Log -->
+    <div class="panel px-2 py-1 flex items-center gap-2 border-l-2 border-l-cyan-500">
+        <div class="status-dot bg-cyan-400 animate-pulse"></div>
+        <p id="ai-log" class="text-[8px] font-mono text-cyan-400/70 italic truncate uppercase flex-1">
+            >> RANGE WINDOW 7FT / 213CM · Awaiting Hardware Handshake...
+        </p>
+        <div id="siren-txt" class="hidden text-[8px] font-black text-red-500 uppercase animate-pulse shrink-0">
+            ⚠ SIREN
+        </div>
+    </div>
+
+    <!-- Range Slider: 5–10 FT -->
+    <div class="panel p-2">
+        <div class="flex justify-between text-[7px] font-bold uppercase mb-1.5">
+            <span class="text-slate-400">Detection Range</span>
+            <span class="text-cyan-400 px-1.5 py-0.5 bg-cyan-500/10 border border-cyan-500/30 rounded">
+                <span id="range-val">7</span> FT / <span id="range-cm">213</span> CM
+            </span>
+        </div>
+        <input type="range" id="range-slider" min="5" max="10" value="7" step="1">
+        <div class="flex justify-between text-[6px] text-slate-600 mt-1">
+            <span>5 FT</span><span>7 FT</span><span>10 FT</span>
+        </div>
+    </div>
+
+    <!-- Controls row -->
+    <div class="flex items-center gap-2">
+
+        <!-- AUTO-FIRE toggle -->
+        <div class="flex flex-col items-center gap-0.5 shrink-0">
+            <span class="text-[6px] font-bold text-slate-500 uppercase tracking-wider">Auto</span>
+            <div id="auto-toggle" class="toggle-track" onclick="toggleAutoFire()">
+                <div class="toggle-knob"></div>
+            </div>
+        </div>
+
+        <!-- INIT / POWER button -->
+        <button id="power-btn" disabled
+            class="px-4 py-3 panel text-[9px] font-black uppercase text-slate-600 opacity-40 active:scale-95 transition-all shrink-0">
+            INIT
+        </button>
+
+        <!-- MANUAL FIRE button — hold-to-fire bar inside button -->
+        <button id="fire-btn" disabled
+            class="flex-1 py-3 bg-slate-800/40 rounded border border-white/5 text-[9px] font-black uppercase tracking-widest text-slate-600 active:scale-95 transition-all" style="position:relative;overflow:hidden;">
+            🔴 FIRE INTERCEPT
+            <div id="hold-ring"></div>
+        </button>
+    </div>
+</footer>
+
+<!-- ══════════════════════════════════════════════
+     IMPACT OVERLAY
+══════════════════════════════════════════════ -->
+<div id="impact-screen"
+    class="fixed inset-0 bg-red-950/96 backdrop-blur-xl z-[500] hidden items-center justify-center text-center p-8">
+    <div>
+        <div class="text-red-400 text-[10px] font-bold uppercase tracking-widest mb-3 animate-pulse">
+            ⚠ ENGAGEMENT CONFIRMED ⚠
+        </div>
+        <h2 class="text-5xl font-black italic text-white tracking-tighter uppercase animate-pulse mb-2">
+            IMPACT
+        </h2>
+        <p class="text-[9px] font-mono text-white/40 uppercase tracking-widest mb-8">
+            Relay Circuit Fired · Target Neutralised
+        </p>
+        <button onclick="closeImpact()"
+            class="px-10 py-2.5 bg-white text-black font-black text-[9px] uppercase tracking-widest rounded-none active:scale-95">
+            RESUME SCAN
+        </button>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     JAVASCRIPT
+══════════════════════════════════════════════ -->
+<script>
+try { lucide.createIcons(); } catch(e) {}
+
+// ═══════════════════════════════════════════════════════════════════
+// SENTINEL V17 ELITE-PRO — EXHIBITION-GRADE HARDENED JAVASCRIPT
+// Pipeline: read → buffer → parse → validate → filter → process →
+//           setState → detectEvents → render
+// All DOM writes go through setDomText() or explicit render() only.
+// All state mutations go through setState() only.
+// ═══════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────
+// ELEMENT REFS — validated at startup
+// BUG FIX: No null-checks in original. If any ID was
+// missing the entire script would crash on first access.
+// Now every ref is validated; missing IDs log an error
+// instead of propagating null silently through the app.
+// ─────────────────────────────────────────────────
+const _elIds = {
+    usbBtn:      'usb-btn',
+    btBtn:       'bt-btn',
+    linkStatus:  'link-status',
+    aiLog:       'ai-log',
+    powerBtn:    'power-btn',
+    fireBtn:     'fire-btn',
+    autoToggle:  'auto-toggle',
+    sweep:       'radar-sweep',
+    blip:        'target-blip',
+    radarCircle: 'radar-circle',
+    angleTxt:    'txt-angle',
+    distTxt:     'txt-dist',
+    statusTxt:   'txt-status',
+    rangeVal:    'range-val',
+    rangeCm:     'range-cm',
+    rangeSld:    'range-slider',
+    overlay:     'impact-screen'
+};
+const els = {};
+for (const [key, id] of Object.entries(_elIds)) {
+    const el = document.getElementById(id);
+    if (!el) console.error('[SENTINEL] Missing DOM element: #' + id);
+    els[key] = el;
+}
+
+// ─────────────────────────────────────────────────
+// STATE — single source of truth
+// ALL mutations go through setState(). No direct
+// property assignment anywhere else in the codebase.
+// ─────────────────────────────────────────────────
+const state = {
+    // System
+    active:       false,
+    isLinked:     false,
+    autoFire:     false,
+
+    // Detection
+    targetAngle:  0,
+    visualAngle:  0,
+    targetDist:   0,           // feet
+    visualDist:   0,
+    hitStable:    0,
+    maxRange:     7,           // feet (slider 5–10)
+
+    // Speech / Audio
+    hasSpoken:    false,
+    sirenOn:      false,
+
+    // Fire
+    firing:       false,
+    lastFire:     0,
+    autoFireScheduled: false,
+
+    // Serial command dedup — FIX: prevents "A\n"/"M\n" spam flooding bus
+    _lastAutoCmd: null,
+
+    // Hardware
+    port:         null,
+    reader:       null,
+    usbWriter:    null,
+    usbBuffer:    "",
+    streamActive: false,
+    lastDataTime: 0,
+
+    // Calibration multiplier (tune from console: state.calibrationOffset = 0.97)
+    calibrationOffset: 1.0,
+
+    // DOM diff cache — prevents redundant writes
+    _lastStatus:   null,
+    _lastLinked:   null,
+    _lastDist:     null,
+    _lastAngle:    null,
+    _lastCanFire:  null,
+    // HOTFIX: live log distance diff cache — prevents ai-log thrash at 30fps
+    _lastLogDist:  null,
+
+    // 30fps cap — last frame timestamp
+    _lastRenderMs: 0,
+
+    // Spike filter baseline (-1 = no reading yet)
+    _lastAcceptedCM: -1,
+
+    // Watchdog interval handle
+    _watchdogTimer: null,
+
+    // Hardware ACK state — tracks relay/buzzer confirmation from Arduino
+    hwRelayOn:    false,   // true after RELAY_ON ack received
+    hwFireOk:     null,    // null=pending, true=FIRE_OK, false=FIRE_FAIL
+    hwAckTimeout: null,    // timeout handle for hardware ACK watchdog
+
+    // rAF pause when tab hidden
+    _rafPaused:   false,
+
+    // BUG FIX: _readerActive prevents re-entrant readSerial() calls.
+    // Without this a port error could spawn two concurrent read loops
+    // racing on the same ReadableStream lock → "stream already locked" crash.
+    _readerActive: false
+};
+
+// ─────────────────────────────────────────────────
+// HARDENING PATCH: CENTRALIZED CLEANUP MANAGER
+// All intervals, timeouts, and RAF handles are
+// registered here so they can all be swept in one
+// call during emergency recovery or shutdown.
+// Prevents orphaned loops across reconnect cycles.
+// ─────────────────────────────────────────────────
+const _cleanupRegistry = {
+    intervals: new Set(),
+    timeouts:  new Set(),
+    rafs:      new Set(),
+
+    addInterval(id)  { if (id) this.intervals.add(id); return id; },
+    addTimeout(id)   { if (id) this.timeouts.add(id);  return id; },
+    addRaf(id)       { if (id) this.rafs.add(id);      return id; },
+
+    clearInterval(id) {
+        clearInterval(id);
+        this.intervals.delete(id);
+    },
+    clearTimeout(id) {
+        clearTimeout(id);
+        this.timeouts.delete(id);
+    },
+    cancelRaf(id) {
+        cancelAnimationFrame(id);
+        this.rafs.delete(id);
+    },
+
+    // HARDENING PATCH: sweepAll — nuclear option used by watchdog panic
+    sweepAll() {
+        this.intervals.forEach(id => clearInterval(id));
+        this.intervals.clear();
+        this.timeouts.forEach(id  => clearTimeout(id));
+        this.timeouts.clear();
+        this.rafs.forEach(id      => cancelAnimationFrame(id));
+        this.rafs.clear();
+        _diag.cleanupCount++;
+    }
+};
+
+// ─────────────────────────────────────────────────
+// HARDENING PATCH: ENGINEERING DIAGNOSTICS (J)
+// Internal-only. No UI changes. Accessible from
+// console via window._sentinelDiag for field debug.
+// ─────────────────────────────────────────────────
+const _diag = {
+    fps:              0,
+    activeTimers:     0,
+    activeRafs:       0,
+    serialPackets:    0,
+    droppedPackets:   0,
+    reconnectCount:   0,
+    watchdogResets:   0,
+    cleanupCount:     0,
+    audioNodeCount:   0,
+    _fpsFrames:       0,
+    // SURGICAL PATCH 4: seed to performance.now() not 0.
+    // With 0, the very first rAF frame sees nowMs-0 >= 1000 as immediately
+    // true and publishes a bogus fps count from just 1-2 frames.
+    // Seeding to now() means the first real 1-second window is measured correctly.
+    _fpsLastSec:      performance.now()
+};
+window._sentinelDiag = _diag;  // expose for field debugging via console
+
+// ─────────────────────────────────────────────────
+// setState — centralised mutation
+// BUG FIX: Original code had ~12 direct state.x = y
+// assignments scattered through powerBtn, triggerFire,
+// closeImpact, etc. — all now routed here.
+// ─────────────────────────────────────────────────
+function setState(updates) {
+    Object.assign(state, updates);
+}
+
+// ─────────────────────────────────────────────────
+// FINITE STATE MACHINE (FSM)
+// Prevents illegal state transitions and race conditions.
+// States: OFFLINE → BOOT → SCANNING → TARGET_LOCK
+//         → ALERT → ENGAGED → RECOVER → SCANNING
+// ─────────────────────────────────────────────────
+const FSM = {
+    OFFLINE:        'OFFLINE',
+    BOOT:           'BOOT',
+    SCANNING:       'SCANNING',
+    TARGET_LOCK:    'TARGET_LOCK',
+    // JS PATCH D (V17): LOCKED added as alias for TARGET_LOCK — matches spec states:
+    // OFFLINE / SCANNING / LOCKED / FIRING / COOLDOWN
+    LOCKED:         'TARGET_LOCK',
+    ALERT:          'ALERT',
+    ENGAGED:        'ENGAGED',        // maps to FIRING in spec
+    // JS PATCH D (V17): COOLDOWN state added — distinct recovery window between
+    // ENGAGED → SCANNING. Prevents immediate re-lock after a fire event.
+    COOLDOWN:       'COOLDOWN',
+    RECOVER:        'RECOVER',
+    // HARDENING PATCH V18: ERROR_RECOVERY state — used by fail-safe system
+    // when serial disconnect / malformed packet storm / stale data freeze detected.
+    // Allows watchdog to signal UI into safe warning state without OFFLINE crash.
+    ERROR_RECOVERY: 'ERROR_RECOVERY'
+};
+
+// Legal transition map — any state may fall to OFFLINE on hardware failure
+// STABILITY FIX: TARGET_LOCK → ALERT was in the map but triggerFire() goes
+// TARGET_LOCK → ENGAGED directly. ALERT is never entered by any code path.
+// The missing TARGET_LOCK→ENGAGED caused an illegal-transition console warning
+// on every fire event and could cause subtle FSM deadlock after multiple fires.
+// JS PATCH D (V17): COOLDOWN added as a timed post-fire gate between
+// ENGAGED→COOLDOWN→SCANNING. closeImpact() transitions through COOLDOWN
+// with a 1.5s delay before allowing SCANNING — prevents instant re-lock.
+const FSM_TRANSITIONS = {
+    [FSM.OFFLINE]:        [FSM.BOOT,           FSM.OFFLINE],
+    [FSM.BOOT]:           [FSM.SCANNING,       FSM.OFFLINE,         FSM.ERROR_RECOVERY],
+    [FSM.SCANNING]:       [FSM.TARGET_LOCK,    FSM.OFFLINE,         FSM.ERROR_RECOVERY],
+    [FSM.TARGET_LOCK]:    [FSM.ENGAGED,        FSM.SCANNING,        FSM.OFFLINE,        FSM.ERROR_RECOVERY],
+    [FSM.ALERT]:          [FSM.ENGAGED,        FSM.SCANNING,        FSM.OFFLINE,        FSM.ERROR_RECOVERY],
+    // SURGICAL PATCH 9: ENGAGED/COOLDOWN/RECOVER must also exit to ERROR_RECOVERY.
+    // E02 (servo fault) and E04 (relay fault) arrive mid-fire from hardware ACK handler.
+    // Without these entries fsmTransition(ERROR_RECOVERY) silently fails → FSM stuck in
+    // ENGAGED or COOLDOWN permanently until 10s watchdog forces OFFLINE. Now immediate.
+    [FSM.ENGAGED]:        [FSM.COOLDOWN,       FSM.RECOVER,         FSM.OFFLINE,        FSM.ERROR_RECOVERY],
+    [FSM.COOLDOWN]:       [FSM.SCANNING,       FSM.OFFLINE,         FSM.ERROR_RECOVERY],
+    [FSM.RECOVER]:        [FSM.SCANNING,       FSM.OFFLINE,         FSM.ERROR_RECOVERY],
+    // HARDENING PATCH V18: ERROR_RECOVERY exits to SCANNING (auto-recover) or OFFLINE (manual)
+    [FSM.ERROR_RECOVERY]: [FSM.SCANNING,       FSM.OFFLINE]
+};
+
+let fsmState = FSM.OFFLINE;
+
+function fsmTransition(next) {
+    const allowed = FSM_TRANSITIONS[fsmState] || [];
+    if (!allowed.includes(next)) {
+        // HARDENING PATCH: STATE VALIDATION GUARD (G1, G2)
+        // Illegal transitions are silently ignored (never crash).
+        // Log to diag for field debugging without polluting UI.
+        if (next !== fsmState) {
+            console.warn('[SENTINEL FSM] Illegal transition:', fsmState, '→', next, '(ignored)');
+        }
+        return false;
+    }
+    fsmState = next;
+    return true;
+}
+
+// ─────────────────────────────────────────────────
+// STALE TARGET TIMEOUT
+// BUG FIX: Original had no stale-lock clearing. If serial
+// froze while locked, hitStable stayed at ≥5 forever,
+// siren ran indefinitely, autoFire kept scheduling.
+// Fix: after 2.5s of silence force-clear the lock.
+// ─────────────────────────────────────────────────
+const STALE_TARGET_MS = 2500;
+let   _staleCheckTimer = null;
+
+function startStaleCheck() {
+    if (_staleCheckTimer) return;
+    // HARDENING PATCH: register interval in cleanup registry (A1, A7)
+    _staleCheckTimer = _cleanupRegistry.addInterval(setInterval(() => {
+        if (!state.active || !state.isLinked) return;
+        const silence = performance.now() - state.lastDataTime;
+        if (silence > STALE_TARGET_MS && state.hitStable > 0) {
+            setState({ hitStable: 0, hasSpoken: false, autoFireScheduled: false });
+            stopSiren();
+            updateLog('SIGNAL TIMEOUT — LOCK CLEARED.');
+            fsmTransition(FSM.SCANNING);
+        }
+        // HARDENING PATCH V18: extended stale freeze — data stream frozen
+        // Triggers fail-safe ERROR_RECOVERY if active+linked but no data for 6s
+        if (silence > FAIL_SAFE.STALE_FREEZE_MS && state.active && state.isLinked) {
+            FAIL_SAFE.enterRecovery('DATA STREAM FROZEN');
+        }
+    }, 500));
+}
+
+function stopStaleCheck() {
+    if (_staleCheckTimer) {
+        // HARDENING PATCH: clear via registry to keep counts accurate (A1, A7)
+        _cleanupRegistry.clearInterval(_staleCheckTimer);
+        _staleCheckTimer = null;
+    }
+}
+
+// HARDENING PATCH: ADAPTIVE QUALITY SCALING — declared here so startNoiseLoop()
+// which references _adaptiveLowFps at line ~794 never hits TDZ.
+// (let declarations do not hoist — if startNoiseLoop ran before this point
+// in any future code reorder, it would throw ReferenceError in strict mode.)
+let _adaptiveLowFps     = false;
+let _adaptiveFpsCounter = 0;
+let _adaptiveFpsTime    = 0;
+
+// ─────────────────────────────────────────────────
+// RADAR REALISM: NOISE + GHOST REFLECTIONS
+// Canvas noise at ~4fps to minimise GPU load on Android.
+// Ghost blips are pre-allocated DOM elements (not recreated
+// each frame) to prevent GC pressure on mobile.
+// ─────────────────────────────────────────────────
+let _noiseCanvas = null, _noiseCtx = null;
+let _ghostEls    = [];
+const GHOST_COUNT = 3;
+let  _noiseFrameTimer = null;
+
+function initRadarRealism() {
+    _noiseCanvas = document.getElementById('radar-noise');
+    if (!_noiseCanvas) return;
+    const size = els.radarCircle ? (els.radarCircle.offsetWidth || 180) : 180;
+    _noiseCanvas.width  = size;
+    _noiseCanvas.height = size;
+    _noiseCtx = _noiseCanvas.getContext('2d');
+
+    // SURGICAL PATCH 6: guard against double-init ghost accumulation.
+    // If initRadarRealism() is somehow called a second time (e.g. after a
+    // reconnect cycle that triggers a resize), _ghostEls already has GHOST_COUNT
+    // nodes. Without this guard it would push GHOST_COUNT more, leaking detached
+    // DOM nodes and breaking the ghost-container trim logic.
+    const gc = document.getElementById('ghost-container');
+    if (gc && _ghostEls.length === 0) {
+        for (let i = 0; i < GHOST_COUNT; i++) {
+            const g = document.createElement('div');
+            g.className = 'ghost-blip';
+            g.style.opacity = '0';
+            gc.appendChild(g);
+            _ghostEls.push(g);
+        }
+    }
+
+    drawNoiseFrame();
+}
+
+function drawNoiseFrame() {
+    if (!_noiseCtx || !state.active || document.hidden) return;
+    const c = _noiseCtx;
+    const w = _noiseCanvas.width, h = _noiseCanvas.height;
+    c.clearRect(0, 0, w, h);
+    const count = 4 + Math.floor(Math.random() * 5);
+    for (let i = 0; i < count; i++) {
+        const r   = Math.random() * (w / 2 - 4);
+        const ang = Math.random() * Math.PI * 2;
+        const x   = w / 2 + r * Math.cos(ang);
+        const y   = h / 2 + r * Math.sin(ang);
+        c.beginPath();
+        c.arc(x, y, 1 + Math.random(), 0, Math.PI * 2);
+        c.fillStyle = 'rgba(6,182,212,' + (0.05 + Math.random() * 0.12) + ')';
+        c.fill();
+    }
+}
+
+function updateGhostBlips() {
+    if (!state.active || document.hidden) {
+        // BUG FIX: original forEach was called even when _ghostEls was empty
+        // (before initRadarRealism ran), iterating an undefined array.
+        for (let i = 0; i < _ghostEls.length; i++) _ghostEls[i].style.opacity = '0';
+        return;
+    }
+    const size   = _noiseCanvas ? _noiseCanvas.width : 180;
+    const radius = size / 2;
+
+    for (let i = 0; i < _ghostEls.length; i++) {
+        const g   = _ghostEls[i];
+        const t   = performance.now() / 4000 + i * 2.1;
+        const r   = (0.35 + 0.45 * Math.abs(Math.sin(t + i))) * radius;
+        const ang = (t * 0.7 + i * 1.2) % (Math.PI * 2);
+        const x   = radius + r * Math.cos(ang);
+        const y   = radius + r * Math.sin(ang);
+        const opa = 0.08 + 0.12 * Math.abs(Math.sin(t * 1.3));
+        // BUG FIX: setting left/top triggers layout. Ghost elements use
+        // transform instead to stay on the compositor thread.
+        g.style.transform = 'translate(' + (x - 2) + 'px, ' + (y - 2) + 'px)';
+        g.style.opacity   = opa.toFixed(3);
+    }
+}
+
+// STABILITY FIX: noise/ghost loop quality is evaluated per-tick rather than
+// being baked in at startNoiseLoop() time. If FPS drops to <20 after the loop
+// has been running for 30 minutes, the old code never adjusted — it kept full
+// 4fps noise. Now a flip-flop halves effective rate to 2fps when under load,
+// without tearing down and restarting the interval.
+let _noiseTickFlip = false;
+
+function startNoiseLoop() {
+    if (_noiseFrameTimer) return;
+    _noiseFrameTimer = _cleanupRegistry.addInterval(setInterval(() => {
+        if (!state.active || document.hidden) return;
+        if (_adaptiveLowFps) {
+            _noiseTickFlip = !_noiseTickFlip;
+            if (_noiseTickFlip) return;   // skip alternate ticks → 2fps effective
+        }
+        drawNoiseFrame();
+        updateGhostBlips();
+    }, 250));  // base tick: 250ms = 4fps; adaptive halves to 2fps
+}
+
+function stopNoiseLoop() {
+    if (_noiseFrameTimer) {
+        // HARDENING PATCH: clear via registry to keep counts accurate (A1, A7)
+        _cleanupRegistry.clearInterval(_noiseFrameTimer);
+        _noiseFrameTimer = null;
+    }
+    for (let i = 0; i < _ghostEls.length; i++) _ghostEls[i].style.opacity = '0';
+    if (_noiseCtx && _noiseCanvas) {
+        _noiseCtx.clearRect(0, 0, _noiseCanvas.width, _noiseCanvas.height);
+    }
+}
+
+// ─────────────────────────────────────────────────
+// SWEEP PERSISTENCE TRAIL ENGINE
+// Draws a fading persistence trail on a dedicated
+// canvas so the radar looks like a real phosphor CRT.
+// Rendered at rAF rate — canvas composited on GPU.
+// Separate from noise canvas to avoid clearing conflicts.
+// ─────────────────────────────────────────────────
+let _trailCanvas = null, _trailCtx = null;
+let _trailSize   = 0;
+// MEMORY FIX: createLinearGradient was called every rAF frame (~60/sec).
+// Over a 10-hour session that is ~2.16 million gradient objects queued for GC.
+// Cache a single gradient instance and rebuild only on canvas resize.
+// The gradient is defined along the positive-X axis (0→radius); the canvas
+// context is rotated to the actual sweep angle at draw time — same result,
+// zero per-frame allocations.
+let _trailGradCache = null;
+let _trailLastAngle = -999; // skip paint when angle hasn't moved
+
+function _buildTrailGradient() {
+    if (!_trailCtx || _trailSize <= 0) return;
+    const half = _trailSize / 2;
+    _trailGradCache = _trailCtx.createLinearGradient(0, 0, half - 2, 0);
+    _trailGradCache.addColorStop(0,   'rgba(6,182,212,0.0)');
+    _trailGradCache.addColorStop(0.3, 'rgba(6,182,212,0.55)');
+    _trailGradCache.addColorStop(1,   'rgba(6,182,212,0.9)');
+}
+
+function initSweepTrail() {
+    _trailCanvas = document.getElementById('sweep-trail');
+    if (!_trailCanvas || !els.radarCircle) return;
+    _trailSize = els.radarCircle.offsetWidth || 220;
+    _trailCanvas.width  = _trailSize;
+    _trailCanvas.height = _trailSize;
+    _trailCtx = _trailCanvas.getContext('2d');
+    _buildTrailGradient();
+}
+
+function renderSweepTrail(angleDeg) {
+    if (!_trailCtx || !_trailGradCache || !state.active || document.hidden) return;
+    // Skip draw when angle delta < 0.2° — imperceptible, saves canvas ops on dwell
+    if (Math.abs(angleDeg - _trailLastAngle) < 0.2) return;
+    _trailLastAngle = angleDeg;
+
+    const c    = _trailCtx;
+    const half = _trailSize / 2;
+    // Fade existing trail — slow decay gives phosphor persistence look
+    c.globalCompositeOperation = 'destination-out';
+    c.fillStyle = 'rgba(0,0,0,0.045)';
+    c.fillRect(0, 0, _trailSize, _trailSize);
+    c.globalCompositeOperation = 'source-over';
+
+    // Draw line using cached gradient, rotated to sweep angle via save/restore
+    const rad = ((angleDeg - 90) * Math.PI) / 180;
+    c.save();
+    c.translate(half, half);
+    c.rotate(rad);
+    c.beginPath();
+    c.moveTo(0, 0);
+    c.lineTo(half - 2, 0);
+    c.strokeStyle = _trailGradCache;
+    c.lineWidth   = 1.5;
+    c.stroke();
+    c.restore();
+}
+
+window.addEventListener('resize', () => {
+    _cachedRadarSize = 0;   // force blip position recalculate on next frame
+    if (_trailCanvas && els.radarCircle) {
+        _trailSize = els.radarCircle.offsetWidth || 220;
+        _trailCanvas.width  = _trailSize;
+        _trailCanvas.height = _trailSize;
+        _trailLastAngle = -999;      // force repaint on next frame
+        _buildTrailGradient();       // rebuild cached gradient for new dimensions
+    }
+    if (_noiseCanvas && els.radarCircle) {
+        const s = els.radarCircle.offsetWidth || 180;
+        _noiseCanvas.width  = s;
+        _noiseCanvas.height = s;
+        _noiseCtx = _noiseCanvas.getContext('2d');
+    }
+}, { passive: true });
+
+// ─────────────────────────────────────────────────
+// VIBRATION FEEDBACK
+// Haptic pulses for target lock + fire confirmation.
+// Degrades silently if device has no vibration motor.
+// ─────────────────────────────────────────────────
+function vibrate(pattern) {
+    if (!navigator.vibrate) return;
+    try { navigator.vibrate(pattern); } catch(e) {}
+}
+
+// ─────────────────────────────────────────────────
+// HARDWARE ACK HANDLER
+// Parses Arduino acknowledgment strings:
+//   RELAY_ON / RELAY_OFF / BUZZER_ON / BUZZER_OFF
+//   FIRE_OK  / FIRE_FAIL
+// UI updates ONLY after confirmed ACK — never speculatively.
+// ACK watchdog: if FIRE_OK/FAIL not received in 3s → show warning.
+// ─────────────────────────────────────────────────
+const HW_ACK_TIMEOUT_MS = 3000;
+
+function handleHardwareAck(token) {
+    switch (token) {
+        case 'RELAY_ON':
+            setState({ hwRelayOn: true });
+            updateLog('HW ACK: RELAY ARMED ✓');
+            break;
+
+        case 'RELAY_OFF':
+            setState({ hwRelayOn: false });
+            updateLog('HW ACK: RELAY SAFE ✓');
+            break;
+
+        case 'BUZZER_ON':
+            updateLog('HW ACK: BUZZER ACTIVE ✓');
+            break;
+
+        case 'BUZZER_OFF':
+            updateLog('HW ACK: BUZZER OFF ✓');
+            break;
+
+        case 'FIRE_OK': {
+            if (state.hwAckTimeout) {
+                _cleanupRegistry.clearTimeout(state.hwAckTimeout);
+                setState({ hwAckTimeout: null });
+            }
+            // JS PATCH B (V17): FIRE_OK must also clear firing flag and recover FSM.
+            // V16 only set hwFireOk:true — system stayed in ENGAGED state permanently
+            // until the operator manually pressed RESUME SCAN (closeImpact).
+            // Now FSM recovers automatically on hardware confirmation.
+            // JS PATCH D (V17): transition through COOLDOWN, not RECOVER directly.
+            setState({ hwFireOk: true, firing: false });
+            fsmTransition(FSM.COOLDOWN);
+            _cleanupRegistry.addTimeout(setTimeout(() => {
+                fsmTransition(FSM.SCANNING);
+            }, 1500));
+            updateLog('HW ACK: FIRE CONFIRMED ✓ — COOLDOWN 1.5s');
+            vibrate([80, 40, 120]);
+            break;
+        }
+
+        case 'FIRE_FAIL': {
+            if (state.hwAckTimeout) {
+                _cleanupRegistry.clearTimeout(state.hwAckTimeout);
+                setState({ hwAckTimeout: null });
+            }
+            setState({ hwFireOk: false, firing: false });
+            updateLog('⚠ HW WARN: RELAY FIRE FAILED — CHECK WIRING');
+            speak('Warning. Relay failure detected.', true);
+            document.body.classList.remove('shaking');
+            if (els.overlay) els.overlay.classList.replace('flex', 'hidden');
+            break;
+        }
+
+        case 'SENTINEL_READY':
+            // HARDENING PATCH: SENTINEL_READY ACK — firmware boot confirmation (C14)
+            // Token is in _HW_ACK_TOKENS set but had no handler — silently fell to default.
+            // Now logged so field debug can confirm firmware bootup over serial link.
+            updateLog('HW ACK: FIRMWARE READY ✓');
+            break;
+
+        // ── JS PATCH 3: New standardized token handlers ───────────────────────────
+        // All new tokens from patched firmware are handled here.
+        // Existing tokens above are untouched — full backward compatibility preserved.
+
+        case 'SYS_READY':
+            // JS PATCH 3: SYS_READY — patched firmware boot confirmation.
+            // UPGRADE E (V17): V17 firmware sends SYS_READY — auto-enable checksum.
+            _checksumEnabled = true;
+            updateLog('HW ACK: FIRMWARE V17 READY ✓ — CHECKSUM ENABLED');
+            break;
+
+        case 'TARGET_LOCK':
+            // JS PATCH 3: TARGET_LOCK — firmware confirms target within threshold.
+            // Frontend FSM/data pipeline independently drives lock state from sensor data.
+            // This ACK is log-only — no state mutation to avoid double-triggering.
+            updateLog('HW ACK: TARGET LOCK CONFIRMED ✓');
+            break;
+
+        case 'TARGET_LOST':
+            // JS PATCH 3: TARGET_LOST — firmware lost target detection.
+            // Logged for operator awareness; FSM state driven by data pipeline, not ACK.
+            updateLog('HW ACK: TARGET LOST — SCANNING');
+            break;
+
+        case 'SENSOR_TIMEOUT':
+            // JS PATCH 3: SENSOR_TIMEOUT — sonar stalled (no echo within timeout window).
+            // Warning only — transient stalls are normal. Persistent stalls trigger
+            // the existing signal watchdog (syncSuccess watchdog, ~3s threshold).
+            updateLog('⚠ HW WARN: SENSOR TIMEOUT — SONAR STALL');
+            break;
+
+        case 'RANGE_OK':
+            // JS PATCH 3: RANGE_OK — firmware received and applied range command.
+            // Confirms that the R<cm> command from the range slider was processed.
+            updateLog('HW ACK: RANGE THRESHOLD SET ✓');
+            break;
+
+        case 'AUTO_ON':
+            // JS PATCH 4: AUTO/MANUAL SYNC — firmware confirmed auto mode enabled.
+            // Syncs frontend toggle visual to match confirmed firmware state.
+            // Guards against duplicate classList.add() calls.
+            if (els.autoToggle && !els.autoToggle.classList.contains('on')) {
+                els.autoToggle.classList.add('on');
+            }
+            updateLog('HW ACK: AUTO MODE CONFIRMED ✓');
+            break;
+
+        case 'AUTO_OFF':
+            // JS PATCH 4: AUTO/MANUAL SYNC — firmware confirmed manual mode.
+            // Syncs frontend toggle visual to match confirmed firmware state.
+            if (els.autoToggle) els.autoToggle.classList.remove('on');
+            updateLog('HW ACK: MANUAL MODE CONFIRMED ✓');
+            break;
+
+        // ── UPGRADE D (V17): Diagnostic Error Codes E01–E04 ─────────────────
+        // Arduino V17 firmware sends: ERROR:Exx:MESSAGE
+        // Parsed here, displayed on serial log + LCD area (ai-log).
+        case 'E01':
+            // E01 = Sensor Timeout
+            // SURGICAL PATCH 15: route through FAIL_SAFE.enterRecovery() instead of raw
+            // fsmTransition(). enterRecovery() sets the auto-recover timer, shows the
+            // ⚠ FAIL-SAFE warning, stops siren, and logs consistently. Direct fsmTransition
+            // only moved the FSM — no UI warning, no auto-recover timer → operator blind.
+            FAIL_SAFE.enterRecovery('DIAG E01: SENSOR TIMEOUT');
+            break;
+
+        case 'E02':
+            // E02 = Servo Fault
+            FAIL_SAFE.enterRecovery('DIAG E02: SERVO FAULT');
+            break;
+
+        case 'E03':
+            // E03 = EEPROM Error
+            updateLog('⚠ DIAG E03: EEPROM ERROR — USING DEFAULT RANGE');
+            // Non-critical — no FSM change needed
+            break;
+
+        case 'E04':
+            // E04 = Relay Fault
+            setState({ firing: false });
+            document.body.classList.remove('shaking');
+            if (els.overlay) els.overlay.classList.replace('flex', 'hidden');
+            FAIL_SAFE.enterRecovery('DIAG E04: RELAY FAULT');
+            break;
+
+        default:
+            break;  // not an ACK token — caller handles data packets
+    }
+}
+
+// ─────────────────────────────────────────────────
+// rAF PAUSE ON TAB HIDDEN
+// Extends existing visibilitychange handler to also
+// pause the render loop — saves significant CPU/battery
+// on Android when screen is off or app is backgrounded.
+// ─────────────────────────────────────────────────
+// (Added to existing visibilitychange listener below — see patch)
+// Runs only once per activation, blocks firing during
+// boot, never overlaps (powerBtn disabled during boot).
+// ─────────────────────────────────────────────────
+const _bootStages = [
+    { label: 'POWER BUS CHECK',    pct: 20,  ms: 380 },
+    { label: 'SENSOR ARRAY',       pct: 45,  ms: 360 },
+    { label: 'SIGNAL CALIBRATION', pct: 70,  ms: 340 },
+    { label: 'TARGET MATRIX',      pct: 90,  ms: 320 },
+    { label: 'READY',              pct: 100, ms: 280 }
+];
+
+// BUG FIX: _bootRunning prevents a second boot sequence from starting
+// if powerBtn somehow fires twice before the disable takes effect.
+let _bootRunning = false;
+
+function runBootSequence(onComplete) {
+    if (_bootRunning) return;   // BUG FIX: block overlapping boot sequences
+    _bootRunning = true;
+
+    const overlay = document.getElementById('boot-overlay');
+    const stageEl = document.getElementById('boot-stage');
+    const barEl   = document.getElementById('boot-bar');
+
+    if (!overlay || !stageEl || !barEl) {
+        // Elements missing — skip boot, go straight to active
+        _bootRunning = false;
+        onComplete();
+        return;
+    }
+
+    // Reset bar to 0 in case of re-boot after stop
+    barEl.style.width = '0%';
+    overlay.classList.add('visible');
+    let i = 0;
+
+    function next() {
+        if (i >= _bootStages.length) {
+            overlay.classList.remove('visible');
+            _bootRunning = false;
+            setTimeout(onComplete, 380);    // wait for fade-out before activating
+            return;
+        }
+        const s = _bootStages[i++];
+        stageEl.textContent = s.label;
+        barEl.style.width   = s.pct + '%';
+        updateLog(s.label + '...');
+        setTimeout(next, s.ms);
+    }
+    next();
+}
+
+// ─────────────────────────────────────────────────
+// HOLD-TO-FIRE SYSTEM
+// Manual fire requires a 600ms press-and-hold.
+// Prevents accidental taps. Red progress bar fills
+// across the button. Auto-fire is NOT affected.
+// BUG FIX: _holdStart_fn was referenced BEFORE being
+// defined in the original file (it was used in
+// addEventListener calls before the function body).
+// Now defined first, used after.
+// ─────────────────────────────────────────────────
+const HOLD_FIRE_MS = 600;
+let _holdTimer  = null;
+let _holdStart  = 0;
+let _holdRafId  = null;
+// BUG FIX: getElementById inside IIFE before DOM is ready → null.
+// Lazily resolved inside _holdStart_fn to guarantee element exists.
+let _holdRingEl = null;
+
+function _getHoldRing() {
+    if (!_holdRingEl) _holdRingEl = document.getElementById('hold-ring');
+    return _holdRingEl;
+}
+
+function _holdProgress() {
+    if (!_holdStart) return;
+    const pct = Math.min((performance.now() - _holdStart) / HOLD_FIRE_MS * 100, 100);
+    const ring = _getHoldRing();
+    if (ring) ring.style.width = pct + '%';
+    if (pct < 100) _holdRafId = requestAnimationFrame(_holdProgress);
+}
+
+function _holdStart_fn(e) {
+    // BUG FIX: touchstart fires before mousedown on mobile — both events
+    // would fire on touch, starting two hold timers. Passive listener
+    // prevents preventDefault, so guard with a simple flag instead.
+    if (_holdTimer) return;
+    if (state.firing || !state.active || state.hitStable < 5) return;
+    _holdStart = performance.now();
+    _holdRafId = requestAnimationFrame(_holdProgress);
+    // SURGICAL PATCH 5: _holdTimer was a raw setTimeout — invisible to
+    // _cleanupRegistry. If sweepAll() ran during an active hold press
+    // (panic recovery or beforeunload), the timer fired 600ms later and
+    // called triggerFire() against a torn-down system. Now registered.
+    _holdTimer = _cleanupRegistry.addTimeout(setTimeout(() => {
+        _cleanupRegistry.timeouts.delete(_holdTimer);
+        _holdClear();
+        triggerFire();
+    }, HOLD_FIRE_MS));
+}
+
+function _holdClear() {
+    clearTimeout(_holdTimer);  _holdTimer = null;
+    cancelAnimationFrame(_holdRafId); _holdRafId = null;
+    _holdStart = 0;
+    const ring = _getHoldRing();
+    if (ring) ring.style.width = '0%';
+}
+
+// ─────────────────────────────────────────────────
+// AUDIO SYSTEM
+// BUG FIX: sirenToken pattern prevents orphaned sweep
+// loops after stopSiren(). Each startSiren() session
+// gets a unique token; sweep() exits if its token no
+// longer matches the current sirenToken — zero leaks.
+// BUG FIX: state.sirenOn was set true BEFORE confirming
+// audioCtx exists, permanently locking stopSiren() as
+// a no-op if initAudio() had never been called.
+// Fix: guard order corrected.
+// ─────────────────────────────────────────────────
+let audioCtx   = null;
+let sirenNodes = null;
+let sirenToken = 0;    // incremented each startSiren — kills orphaned loops
+
+function initAudio() {
+    if (audioCtx) return;
+    try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch(e) {
+        // Audio not supported — degrade gracefully, never crash
+        audioCtx = null;
+    }
+}
+
+// HARDENING PATCH: AUDIO DEBOUNCE (E3, E4)
+// Prevents siren retrigger spam if target flickers in/out of range rapidly.
+// startSiren() cannot be called again within 1.2s of a stopSiren() call.
+let _sirenLastStopMs = 0;
+const SIREN_DEBOUNCE_MS = 1200;
+
+function startSiren() {
+    // BUG FIX: guard audioCtx FIRST — then set sirenOn
+    if (!audioCtx || state.sirenOn) return;
+    // HARDENING PATCH: debounce retrigger after rapid stop/start cycles (E3, E4)
+    if (performance.now() - _sirenLastStopMs < SIREN_DEBOUNCE_MS) return;
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    setState({ sirenOn: true });   // BUG FIX: was direct state.sirenOn = true, bypassing setState
+
+    const gain = audioCtx.createGain();
+    gain.gain.setValueAtTime(0.0, audioCtx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.35, audioCtx.currentTime + 0.15);
+    gain.connect(audioCtx.destination);
+
+    const osc1 = audioCtx.createOscillator();
+    osc1.type = 'sawtooth';
+    osc1.frequency.setValueAtTime(440, audioCtx.currentTime);
+    osc1.frequency.linearRampToValueAtTime(880, audioCtx.currentTime + 0.5);
+    osc1.frequency.linearRampToValueAtTime(440, audioCtx.currentTime + 1.0);
+    osc1.connect(gain);
+    osc1.start();
+
+    const osc2 = audioCtx.createOscillator();
+    osc2.type = 'square';
+    osc2.frequency.setValueAtTime(330, audioCtx.currentTime);
+    osc2.frequency.linearRampToValueAtTime(660, audioCtx.currentTime + 0.5);
+    osc2.frequency.linearRampToValueAtTime(330, audioCtx.currentTime + 1.0);
+    osc2.connect(gain);
+    osc2.start();
+
+    sirenNodes = { osc1, osc2, gain };
+    _diag.audioNodeCount += 3;  // HARDENING PATCH: track audio node count (J, E5)
+    const myToken = ++sirenToken;   // unique session token
+
+    function sweep() {
+        // BUG FIX: token check kills this loop if a new siren session has
+        // started or stopSiren() was called — prevents zombie loops.
+        if (!state.sirenOn || !sirenNodes || sirenToken !== myToken) return;
+        const nodes = sirenNodes;   // local snapshot — cannot become null mid-function
+        if (!nodes || !audioCtx) return;
+        // AUDIO ENGINE HARDENING: do not schedule AudioParam ramps on a
+        // suspended context — on Android Chrome, setValueAtTime on a
+        // suspended context queues correctly but linearRampToValueAtTime
+        // can misalign the ramp origin, causing a pitch glitch on resume.
+        // Skip this sweep tick; the next one fires 900ms later by which
+        // point the tab will have resumed or the siren been stopped. (E5, E6)
+        if (audioCtx.state === 'suspended') { setTimeout(sweep, 900); return; }
+        try {
+            const t = audioCtx.currentTime;
+            nodes.osc1.frequency.setValueAtTime(440, t);
+            nodes.osc1.frequency.linearRampToValueAtTime(880, t + 0.5);
+            nodes.osc1.frequency.linearRampToValueAtTime(440, t + 1.0);
+            nodes.osc2.frequency.setValueAtTime(330, t);
+            nodes.osc2.frequency.linearRampToValueAtTime(660, t + 0.5);
+            nodes.osc2.frequency.linearRampToValueAtTime(330, t + 1.0);
+        } catch(e) { return; }   // oscillator already stopped — exit cleanly
+        setTimeout(sweep, 900);
+    }
+    setTimeout(sweep, 900);
+
+    const si = document.getElementById('siren-indicator');
+    const st = document.getElementById('siren-txt');
+    if (si) si.style.display = 'block';
+    if (st) st.classList.remove('hidden');
+}
+
+function stopSiren() {
+    // BUG FIX: set sirenOn=false FIRST — kills sweep() loop on next tick
+    // before any teardown, preventing any scheduled sweep from re-writing
+    // AudioParams after stop() has been called.
+    // BUG FIX: was direct state.sirenOn = false, bypassing setState.
+    if (!state.sirenOn) return;
+    setState({ sirenOn: false });
+
+    if (sirenNodes && audioCtx) {
+        try {
+            const t = audioCtx.currentTime;
+            sirenNodes.gain.gain.cancelScheduledValues(t);
+            sirenNodes.gain.gain.linearRampToValueAtTime(0, t + 0.1);
+            sirenNodes.osc1.stop(t + 0.15);
+            sirenNodes.osc2.stop(t + 0.15);
+            // HARDENING PATCH: disconnect nodes after stop to prevent zombie gain node
+            // accumulation in the AudioContext graph (E7, E8). Nodes are GC'd only after
+            // disconnect; without this, every siren cycle leaks 3 live AudioNodes.
+            setTimeout(() => {
+                try {
+                    if (sirenNodes) {
+                        sirenNodes.osc1.disconnect();
+                        sirenNodes.osc2.disconnect();
+                        sirenNodes.gain.disconnect();
+                        _diag.audioNodeCount = Math.max(0, _diag.audioNodeCount - 3);
+                    }
+                } catch(e) { /* already disconnected */ }
+            }, 200);
+        } catch(e) { /* already stopped or context closed */ }
+    }
+    sirenNodes = null;
+    _sirenLastStopMs = performance.now();  // HARDENING PATCH: record stop time for debounce (E4)
+    const si2 = document.getElementById('siren-indicator');
+    const st = document.getElementById('siren-txt');
+    if (si2) si2.style.display = 'none';
+    if (st) st.classList.add('hidden');
+}
+
+// ─────────────────────────────────────────────────
+// SPEECH MANAGER — Android Chrome bulletproof
+// BUG FIX: Reused SpeechSynthesisUtterance threw
+// "InvalidStateError" on some Android Chrome builds
+// after the utterance had already been queued once.
+// Fix: create a fresh utterance each call (lightweight
+// object, avoids all stale-state exceptions).
+// BUG FIX: cancel() was only called on force=true.
+// Android Chrome freezes the synthesis queue if you
+// queue a second utterance without cancelling first.
+// Fix: always cancel before speaking.
+// ─────────────────────────────────────────────────
+let _lastSpeechMs = 0;
+
+function speak(text, force = true) {
+    if (!window.speechSynthesis) return;
+    // PATCH 7: suppress non-forced speech when system is OFFLINE.
+    // Prevents queued utterances from firing after shutdown or panic recovery.
+    // force=true (boot/fire/disconnect messages) always allowed through.
+    if (fsmState === FSM.OFFLINE && !force) return;
+    const now = performance.now();
+    // Always cancel first — only reliable way to prevent Android queue freeze
+    if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+        window.speechSynthesis.cancel();
+    }
+    // Non-forced calls respect 2s cooldown (prevents "Target Locked" spam)
+    if (!force && now - _lastSpeechMs < 2000) return;
+    _lastSpeechMs = now;
+    // Fresh utterance each call — avoids InvalidStateError on Android Chrome
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.pitch = 0.7;
+    utt.rate  = 1.05;
+    window.speechSynthesis.speak(utt);
+}
+
+// ─────────────────────────────────────────────────
+// VISIBILITY + AUDIO LIFECYCLE
+// BUG FIX: Android Chrome freezes speechSynthesis
+// queue on tab switch. Cancel on hide prevents corruption.
+// Suspend AudioContext on hide to stop battery drain.
+// Resume only if siren should still be active.
+// ─────────────────────────────────────────────────
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+        if (audioCtx && audioCtx.state === 'running') audioCtx.suspend();
+        // HARDENING PATCH: stop siren audio on hidden tab (E7)
+        // AudioContext suspension stops output but siren state is preserved.
+        // This prevents the oscillator sweep loop from accumulating setTimeout
+        // callbacks while the tab is hidden — they'd all fire on resume.
+        if (state.sirenOn && audioCtx) {
+            // Don't call stopSiren() — that clears sirenOn and kills the
+            // siren indicator. Just suspend the context (done above).
+            // The sweep() function's `audioCtx.state === 'suspended'` check
+            // will gracefully no-op until resume.
+        }
+        // PERFORMANCE PATCH: clear sweep-trail canvas on hide to prevent
+        // stale phosphor data from accumulating while the tab is dark (F1, B11)
+        // Trail will rebuild from scratch on resume — imperceptible to user.
+        if (_trailCtx && _trailCanvas) {
+            _trailCtx.clearRect(0, 0, _trailSize, _trailSize);
+        }
+        setState({ _rafPaused: true });    // pause render loop — saves CPU/battery
+    } else {
+        // STABILITY FIX: resume AudioContext unconditionally on tab-show.
+        // Previously only resumed if state.sirenOn was true. If the stale-lock
+        // watchdog stopped the siren while the tab was hidden, sirenOn was false
+        // and the AudioContext stayed suspended permanently — no audio until reload.
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+        // SURGICAL PATCH 18: explicitly clear _rafPaused on tab-show.
+        // On some Android Chrome builds, rapid hide→show→hide→show sequences can
+        // deliver two 'visible' events without a matching hidden in between, but
+        // _rafPaused may have been left true by the first hide. Clear it here so
+        // the render loop is never stuck paused on a visible tab.
+        setState({ _rafPaused: false });
+        if (!_rafLoopRunning) {
+            _rafLoopRunning = true;
+            requestAnimationFrame(render);
+        }
+    }
+}, { passive: true });
+
+// ─────────────────────────────────────────────────
+// DOM HELPERS
+// ─────────────────────────────────────────────────
+function setLinkStatus(text, cls) {
+    if (!els.linkStatus) return;
+    const key = text + '|' + cls;
+    if (state._lastLinked === key) return;
+    state._lastLinked = key;
+    els.linkStatus.innerText = text;
+    els.linkStatus.className = cls;
+}
+
+// BUG FIX: updateLog had no length guard. innerText of very long strings
+// causes slow paint on low-end Android. Capped at 120 chars.
+function updateLog(m) {
+    if (!els.aiLog) return;
+    els.aiLog.innerText = '>> ' + String(m).slice(0, 120);
+}
+
+// setDomText — only writes if value actually changed (prevents DOM thrashing)
+// BUG FIX: original did not null-check el → crash if any getElementById returned null.
+// BUG FIX: `el.className = undefined` sets className to string "undefined".
+//          Guarded with explicit undefined check.
+function setDomText(el, text, cls, stateKey) {
+    if (!el) return;
+    const key = text + '|' + (cls !== undefined ? cls : '');
+    if (state[stateKey] === key) return;
+    state[stateKey] = key;
+    el.innerText = text;
+    if (cls !== undefined) el.className = cls;
+}
+
+// ─────────────────────────────────────────────────
+// syncSuccess — called on USB connect
+// BUG FIX: original called setDomText before it was defined
+// (syncSuccess appeared above setDomText in source order).
+// Definitions reordered: setDomText → syncSuccess.
+// BUG FIX: duplicate watchdog timers on reconnect.
+// Guard: only start if not already running AND none orphaned.
+// ─────────────────────────────────────────────────
+function syncSuccess(msg) {
+    fsmTransition(FSM.BOOT);
+    setState({ isLinked: true, lastDataTime: performance.now() });
+    setLinkStatus('● ' + msg, 'text-[7px] text-emerald-400 font-bold uppercase tracking-widest mt-0.5');
+    if (els.powerBtn) {
+        els.powerBtn.disabled  = false;
+        els.powerBtn.className = 'px-4 py-3 panel text-[9px] font-black uppercase text-cyan-400 active:scale-95 transition-all shrink-0';
+    }
+    speak('Hardware link established. System ready.');
+    // SYNC FIX: include current selected range in the ready message so the
+    // operator immediately knows the active detection range on connect.
+    updateLog(msg + ' — READY · RANGE: ' + state.maxRange + ' FT / ' + Math.round(state.maxRange / 0.0328084) + ' CM');
+
+    // BUG FIX: clear any stale watchdog from a previous session before starting new one
+    // HARDENING PATCH: clear via registry to decrement active timer count (A7)
+    if (state._watchdogTimer) {
+        _cleanupRegistry.clearInterval(state._watchdogTimer);
+        setState({ _watchdogTimer: null });
+    }
+
+    // HARDENING PATCH: register watchdog timer in cleanup registry (A1, A7)
+    const timer = _cleanupRegistry.addInterval(setInterval(() => {
+        if (!state.isLinked || !state.active) return;
+        if (performance.now() - state.lastDataTime > 3000) {
+            updateLog('NO SIGNAL — CHECK HARDWARE.');
+            setDomText(els.statusTxt, 'NO SIGNAL', 'text-base font-black text-amber-500 animate-pulse uppercase', '_lastStatus');
+            stopSiren();
+            setState({ hitStable: 0, hasSpoken: false, autoFireScheduled: false });
+            // Do not hard-disconnect — signal may resume (servo at sweep end)
+        }
+
+        // WATCHDOG FIX: detect render loop health by comparing frame counter
+        // If fps drops to 0 for >3s while tab is visible, restart rAF chain.
+        if (!document.hidden && _diag.fps === 0 && !_rafLoopRunning) {
+            _diag.watchdogResets++;
+            updateLog('WATCHDOG: RENDER STALL DETECTED — RECOVERING.');
+            _rafLoopRunning = true;
+            requestAnimationFrame(render);  // re-seed the chain
+        }
+    }, 1000));  // BUG FIX: missing closing ) for _cleanupRegistry.addInterval(setInterval(...))
+    setState({ _watchdogTimer: timer });
+}
+
+// ─────────────────────────────────────────────────
+// SENSOR FILTER: ADAPTIVE EMA + KALMAN-STYLE VARIANCE
+// Replaces the simple 5-sample moving average with an
+// adaptive exponential moving average whose alpha scales
+// dynamically: fast (0.35) when reading is stable, slow
+// (0.12) when signal variance is high (noisy environment).
+// This eliminates the MA lag spike that made blips jump
+// when a new target entered the beam after clear air.
+//
+// Kalman-style: tracks a running variance estimate (σ²)
+// using an exponential variance smoother. When instantaneous
+// error²  >> σ², alpha is reduced — the filter trusts the
+// estimate more than the noisy sample. When signal is clean
+// and consistent, alpha rises — the filter follows quickly.
+//
+// HYSTERESIS LOCK: inRange uses a two-threshold band to
+// prevent rapid lock/unlock cycling at the maxRange boundary.
+//   Enter range: dist < (maxRange * HYST_ENTER_RATIO)  [e.g. 95%]
+//   Exit range:  dist > (maxRange * HYST_EXIT_RATIO)   [e.g. 105%]
+// A target that drifts ±2% around the range edge will NOT
+// flicker in/out — it stays in whichever state it entered.
+//
+// DEAD-ZONE: HC-SR04 readings below 4 cm are physically
+// unreliable (ultrasonic wave hasn't fully separated from
+// the transducer pulse). Readings under DEAD_ZONE_CM are
+// treated as no-detection to suppress false positives from
+// objects touching or nearly touching the sensor head.
+// ─────────────────────────────────────────────────
+
+
+// ─────────────────────────────────────────────────────────────────
+// UPGRADE C (V17): MEDIAN FILTER
+// 5-sample circular buffer. Sorts a copy and returns the middle
+// value — effectively rejects single-sample HC-SR04 spikes that
+// the EMA alone would partially absorb.
+// Applied BEFORE EMA in filterData() pipeline:
+//   raw → dead-zone → spike-reject → MEDIAN → EMA → output
+// ─────────────────────────────────────────────────────────────────
+const MEDIAN_WIN = 5;
+const _medBuf    = new Float32Array(MEDIAN_WIN);
+let   _medIdx    = 0;
+let   _medCount  = 0;
+
+function medianFilter(val) {
+    _medBuf[_medIdx] = val;
+    _medIdx = (_medIdx + 1) % MEDIAN_WIN;
+    if (_medCount < MEDIAN_WIN) _medCount++;
+
+    // Until buffer full — return running mean to avoid startup latency
+    if (_medCount < MEDIAN_WIN) {
+        let sum = 0;
+        for (let i = 0; i < _medCount; i++) sum += _medBuf[i];
+        return sum / _medCount;
+    }
+
+    // Copy + insertion-sort (tiny fixed array — O(n²) fine)
+    const sorted = Array.from(_medBuf).sort((a, b) => a - b);
+    return sorted[Math.floor(MEDIAN_WIN / 2)];
+}
+
+function resetMedianFilter() {
+    _medIdx   = 0;
+    _medCount = 0;
+    _medBuf.fill(0);
+}
+
+// EMA state — zero allocs per sample after init
+let _emaValue    = -1;    // -1 = uninitialised
+let _emaVariance =  0;    // running variance estimate (cm²)
+
+// Adaptive EMA tuning constants
+const EMA_ALPHA_FAST  = 0.35;  // fast-track clean signal
+const EMA_ALPHA_SLOW  = 0.12;  // damp noisy signal
+const EMA_VAR_ALPHA   = 0.25;  // variance smoother rate
+const EMA_NOISE_THRESHOLD_CM2 = 100; // σ² above which alpha degrades (10cm² → slow)
+
+// Hysteresis band (fraction of maxRange)
+const HYST_ENTER_RATIO = 0.95;  // must be within 95% of maxRange to enter LOCKED
+const HYST_EXIT_RATIO  = 1.05;  // must exceed 105% of maxRange to exit LOCKED
+let   _hystInRange     = false; // current hysteresis state
+
+// Dead-zone: ignore readings closer than this (HC-SR04 minimum reliable)
+const DEAD_ZONE_CM = 4;
+
+function filterDistance(val) {
+    if (_emaValue < 0) {
+        // First sample — seed EMA and variance directly; no filtering yet
+        _emaValue    = val;
+        _emaVariance = 0;
+        return val;
+    }
+    const err   = val - _emaValue;
+    const err2  = err * err;
+    // Update running variance with exponential smoother
+    _emaVariance += EMA_VAR_ALPHA * (err2 - _emaVariance);
+    // Choose alpha: fast when variance low, slow when high
+    const alpha = (_emaVariance > EMA_NOISE_THRESHOLD_CM2) ? EMA_ALPHA_SLOW : EMA_ALPHA_FAST;
+    _emaValue   += alpha * err;
+    return _emaValue;
+}
+
+function resetHistory() {
+    _emaValue    = -1;
+    _emaVariance =  0;
+    _hystInRange = false;
+    _spikeConsecutive = 0;   // HOTFIX: reset spike counter on session reset
+    resetMedianFilter();     // UPGRADE C (V17): reset median buffer on session reset
+}
+
+// HYSTERESIS GATE: returns stable in/out-of-range boolean
+// based on EMA-filtered distance and current hysteresis state.
+// Prevents rapid flicker at the range boundary edge.
+function hystInRange(distFt) {
+    if (distFt < 0.1) {
+        // Below practical minimum — treat as out-of-range (no detection)
+        _hystInRange = false;
+        return false;
+    }
+    const enterThresh = state.maxRange * HYST_ENTER_RATIO;
+    const exitThresh  = state.maxRange * HYST_EXIT_RATIO;
+    if (!_hystInRange && distFt < enterThresh) {
+        _hystInRange = true;   // crossed inward threshold — enter locked
+    } else if (_hystInRange && distFt > exitThresh) {
+        _hystInRange = false;  // crossed outward threshold — exit locked
+    }
+    // If between enterThresh and exitThresh — hold current state (hysteresis band)
+    return _hystInRange;
+}
+
+// Legacy ring buffer kept as dead code stub so any external
+// references (console patches) don't throw ReferenceError.
+const _histBuf   = new Float32Array(5);
+let   _histHead  = 0;
+let   _histCount = 0;
+
+// ─────────────────────────────────────────────────
+// EVENT LAYER — detectEvents()
+// Called after processIncomingData updates state.
+// Audio/siren side-effects ONLY — no data mutation here.
+// BUG FIX: Original cleared hitStable and autoFireScheduled
+// in two separate setState calls, creating a window between
+// them where state was inconsistent. Merged into one call.
+// ─────────────────────────────────────────────────
+function detectEvents(inRange) {
+    if (!inRange) {
+        if (state.hitStable > 0) {
+            setState({ hasSpoken: false });
+            fsmTransition(FSM.SCANNING);
+        }
+        setState({ hitStable: 0, autoFireScheduled: false });
+        stopSiren();
+    } else if (state.hitStable === 5) {
+        fsmTransition(FSM.TARGET_LOCK);
+    }
+}
+
+// ─────────────────────────────────────────────────
+// DATA PROCESSING — pure data layer
+// Only mutates state. No audio, no UI, no siren.
+// Receives pre-validated, pre-filtered CM value.
+// BUG FIX: hitStable had no upper bound — at 50Hz it
+// would hit 180,000 in an hour, causing integer overflow
+// in some JS engines. Clamped to 120.
+// BUG FIX: calibrationOffset was applied after CM→FT
+// conversion. Offset must scale the sensor reading (CM
+// domain), not the converted display value. Fixed.
+// ─────────────────────────────────────────────────
+function processIncomingData(angle, filteredCM) {
+    if (!state.active) return;
+
+    // calibrationOffset in CM domain (correct dimensional scaling)
+    const distFt  = (filteredCM * state.calibrationOffset) * 0.0328084;
+    // HYSTERESIS GATE: prevents rapid lock/unlock flicker at the range boundary.
+    // Uses a two-threshold band (95% enter, 105% exit) to stabilise the binary
+    // in/out state. Replaces the direct comparison distFt < state.maxRange which
+    // caused oscillation when a target hovered at the exact detection boundary.
+    const inRange = hystInRange(distFt);
+
+    setState({
+        targetAngle:  angle,
+        targetDist:   distFt,
+        lastDataTime: performance.now(),
+        hitStable:    inRange ? Math.min(state.hitStable + 1, 120) : state.hitStable
+    });
+
+    detectEvents(inRange);
+
+    // AUTO-FIRE serial command
+    // BUG FIX: original sent "M\n" on every out-of-range packet regardless
+    // of autoFire state, flooding the serial bus in manual mode.
+    // Fix: only send on actual command CHANGE (dedup via _lastAutoCmd).
+    const wantCmd = (state.autoFire && inRange) ? 'A' : (state.autoFire && !inRange ? 'M' : null);
+    if (wantCmd && wantCmd !== state._lastAutoCmd) {
+        setState({ _lastAutoCmd: wantCmd });
+        sendSerial(wantCmd === 'A' ? PROTOCOL_CMDS.AUTO_ON : PROTOCOL_CMDS.AUTO_OFF);  // PATCH 3: centralized constant — no more magic string bypass
+    }
+}
+
+// ─────────────────────────────────────────────────
+// PIPELINE — parsePacket → validateData → filterData → process
+// ─────────────────────────────────────────────────
+
+// Stage 1 — Parse: extract numbers from raw line, no logic
+// BUG FIX: original regex /A:([\d.]+)/ matched "A:1.2.3" → parseFloat = 1.2
+// silently dropping the malformed suffix. Stricter pattern enforced.
+function parsePacket(line) {
+    // JS PATCH 1: SERIAL PACKET COMPATIBILITY — strip < > angle brackets.
+    // Arduino legacy firmware sends <A:90,D:120.5>; new firmware sends A:90,D:120.5.
+    // This one-line shim makes the parser accept BOTH formats without any other change.
+    // Preserves all downstream parse → validate → filter logic untouched.
+    line = line.replace(/[<>]/g, '').trim();
+    if (!line) return null;
+
+    // Improved format: "A:90,D:25"
+    const imp = line.match(/^A:(\d+(?:\.\d+)?),D:(\d+(?:\.\d+)?)$/i);
+    if (imp) return { angle: parseFloat(imp[1]), distance: parseFloat(imp[2]) };
+
+    // Legacy format: "90,152" — exactly two comma-separated numbers
+    const parts = line.split(',');
+    if (parts.length === 2) {
+        // HOTFIX SERIAL: guard against non-numeric strings before parseFloat.
+        // /^\s*-?\d+(?:\.\d+)?\s*$/ matches a plain decimal number only.
+        // Rejects hex, exponential notation, and garbage that parseFloat would
+        // silently convert to a bogus finite value (e.g. "0x1A" → 0).
+        if (!/^\s*\d+(?:\.\d+)?\s*$/.test(parts[0]) || !/^\s*\d+(?:\.\d+)?\s*$/.test(parts[1])) return null;
+        const a = parseFloat(parts[0]), d = parseFloat(parts[1]);
+        return { angle: a, distance: d };
+    }
+
+    return null;
+}
+
+// Stage 2 — Validate: reject NaN, Infinity, out-of-range, clamp
+// BUG FIX: original checked isNaN but not isFinite.
+// parseFloat("1e999") = Infinity — passes isNaN but would corrupt
+// blip position math with Infinity * radius = NaN.
+function validateData(angle, distance) {
+    if (!Number.isFinite(angle) || !Number.isFinite(distance)) return null;
+    if (distance < 0) return null;
+    return {
+        angle:    Math.max(0, Math.min(180, angle)),    // servo: 0–180°
+        distance: Math.max(0, Math.min(400, distance))  // HC-SR04 max: ~400 cm
+    };
+}
+
+// Stage 3 — Filter: dead-zone → spike rejection → adaptive EMA
+// DEAD-ZONE: readings below DEAD_ZONE_CM are physically unreliable
+// on HC-SR04 (transducer ringing). Treat as no-detection.
+// SPIKE REJECTION: discard readings that jump >50cm from last accepted.
+// EMA: passes through adaptive EMA with Kalman-style alpha selection.
+// HOTFIX: consecutive spike counter — after 3 consecutive large jumps,
+// re-seed the baseline to the new value. Prevents permanent rejection
+// when a target moves rapidly across the beam or the sensor resets.
+let _spikeConsecutive = 0;   // HOTFIX: counts back-to-back spike-rejected readings
+const SPIKE_RESEED_COUNT = 3; // HOTFIX: re-seed baseline after this many consecutive spikes
+
+function filterData(distanceCM) {
+    // DEAD-ZONE REJECTION: ultra-close readings are HC-SR04 noise artifacts
+    if (distanceCM > 0 && distanceCM < DEAD_ZONE_CM) {
+        _diag.droppedPackets++;
+        _spikeConsecutive = 0;   // HOTFIX: dead-zone hit resets spike counter
+        return null;
+    }
+
+    if (state._lastAcceptedCM < 0) {
+        // First reading — accept to seed filter, establish baseline
+        setState({ _lastAcceptedCM: distanceCM });
+        _spikeConsecutive = 0;   // HOTFIX: reset on first seed
+    } else if (Math.abs(distanceCM - state._lastAcceptedCM) > 50) {
+        // Spike: jump too large for physical servo sweep — discard
+        // HOTFIX: increment consecutive counter; if threshold reached, re-seed
+        // to the new value so fast-moving targets don't freeze the pipeline.
+        _spikeConsecutive++;
+        if (_spikeConsecutive >= SPIKE_RESEED_COUNT) {
+            _spikeConsecutive = 0;
+            setState({ _lastAcceptedCM: distanceCM });
+            _emaValue = distanceCM;   // HOTFIX: also reset EMA to new baseline
+            _emaVariance = 0;
+        }
+        return null;
+    } else {
+        setState({ _lastAcceptedCM: distanceCM });
+        _spikeConsecutive = 0;   // HOTFIX: clean reading resets spike counter
+    }
+    // UPGRADE C (V17): run through median filter first, then EMA inside filterDistance()
+    const _medVal = medianFilter(distanceCM);
+    return filterDistance(_medVal);
+}
+
+// Stage 4 — Orchestrator
+// ACK tokens from Arduino are intercepted before the data pipeline.
+// Data packets pass through parse → validate → filter → process.
+// JS PATCH 2: ACK TOKEN STANDARDIZATION — expanded token set.
+// Includes all new bare tokens emitted by patched firmware (no angle brackets).
+// All original tokens preserved for backward compatibility with older firmware builds.
+// Set lookup is O(1) — no performance cost from adding entries.
+
+// JS PATCH F (V17): CENTRALIZED PROTOCOL CONSTANTS — single source of truth.
+// All outbound serial command strings live here. Prevents magic string duplication
+// across sendSerial() call sites. Existing call sites preserved for backward compat.
+// HARDENING PATCH V18: added inbound ACK constant strings for reference/logging.
+const PROTOCOL_CMDS = {
+    FIRE:           'F\n',
+    AUTO_ON:        'A\n',
+    AUTO_OFF:       'M\n',
+    RANGE_PFX:      'R',         // usage: PROTOCOL_CMDS.RANGE_PFX + cm + '\n'
+    // ── Inbound ACK token constants (read-only reference — not sent outbound) ──
+    SYS_READY:      'SYS_READY',
+    TARGET_LOCK:    'TARGET_LOCK',
+    TARGET_LOST:    'TARGET_LOST',
+    RELAY_ON:       'RELAY_ON',
+    RELAY_OFF:      'RELAY_OFF',
+    FIRE_OK:        'FIRE_OK',
+    FIRE_FAIL:      'FIRE_FAIL',
+    SENSOR_TIMEOUT: 'SENSOR_TIMEOUT',
+    RANGE_OK:       'RANGE_OK',
+    AUTO_ON_ACK:    'AUTO_ON',
+    AUTO_OFF_ACK:   'AUTO_OFF'
+};
+
+const _HW_ACK_TOKENS = new Set([
+    // ── Original tokens (preserved, backward compatible) ──────────────────
+    'RELAY_ON', 'RELAY_OFF', 'BUZZER_ON', 'BUZZER_OFF',
+    'FIRE_OK', 'FIRE_FAIL', 'SENTINEL_READY',
+    // ── JS PATCH 2: New standardized bare tokens from patched firmware ─────
+    'SYS_READY',        // replaces <SYS_READY> — firmware boot confirmation
+    'TARGET_LOCK',      // replaces <TARGET_LOCK> — firmware target acquired
+    'TARGET_LOST',      // replaces <TARGET_LOST> — firmware target cleared
+    'SENSOR_TIMEOUT',   // new — sonar failed to return echo
+    'RANGE_OK',         // new — firmware received and applied range threshold
+    'AUTO_ON',          // PATCH 4: firmware confirmed auto mode enabled
+    'AUTO_OFF',         // PATCH 4: firmware confirmed manual mode enabled
+    // UPGRADE D (V17): Diagnostic error code tokens from Arduino V17 firmware
+    'E01',              // Sensor Timeout
+    'E02',              // Servo Fault
+    'E03',              // EEPROM Error
+    'E04'               // Relay Fault
+]);
+
+// DUPLICATE PACKET SUPPRESSION: Arduino at high baud sometimes re-sends
+// the same angle+distance sample twice in rapid succession (servo stopped
+// at sweep end, HC-SR04 returning same value). Identical back-to-back
+// data packets add no new information and needlessly increment hitStable.
+// Suppress packets whose content hash matches the immediately prior packet.
+// Reset on reconnect/disconnect via resetHistory().
+let _lastPacketKey = '';
+
+function parseLines(lines) {
+    for (const line of lines) {
+        // STABILITY FIX: per-line try-catch. A single malformed line that slips
+        // past validation (e.g. a NaN produced by unusual calibrationOffset combo
+        // in processIncomingData math) previously threw and aborted the whole loop,
+        // silently dropping all remaining packets in the batch. Now each line is
+        // isolated — one bad packet never affects the others.
+        try {
+            // JS PATCH A (V17): strip angle brackets BEFORE ACK set lookup.
+            // parsePacket() stripped them internally, but _HW_ACK_TOKENS.has()
+            // ran on the un-stripped trimmed value — so <SYS_READY> never matched.
+            // One replace here covers both ACK tokens AND data packets uniformly.
+            const trimmed = line.replace(/[<>]/g, '').trim();
+            if (!trimmed) continue;
+
+            // UPGRADE D (V17): parse "ERROR:E0x:MSG" format from Arduino V17 firmware
+            // Extract the error code token (E01/E02/E03/E04) and route it through
+            // the ACK handler for serial + LCD reporting. Rest of pipeline unchanged.
+            if (trimmed.startsWith('ERROR:')) {
+                const eParts = trimmed.split(':');
+                if (eParts.length >= 2 && _HW_ACK_TOKENS.has(eParts[1])) {
+                    handleHardwareAck(eParts[1]);
+                    continue;
+                }
+            }
+
+            if (trimmed.length > 64) {
+                _diag.droppedPackets++;
+                continue;
+            }
+
+            if (_HW_ACK_TOKENS.has(trimmed)) {
+                handleHardwareAck(trimmed);
+                continue;
+            }
+
+            // BUG FIX (V17 PATCH): parsePacket must receive the already-stripped
+            // trimmed value — not the original line. Previously <A:90,D:120> packets
+            // were stripped in trimmed above (for ACK lookup) but parsePacket still
+            // ran its own .replace(/[<>]/g,'') on the raw line. Passing trimmed here
+            // makes the two-stage strip redundant and ensures uniform parsing.
+            const packet = parsePacket(trimmed);
+            if (!packet) { _diag.droppedPackets++; continue; }
+
+            const valid = validateData(packet.angle, packet.distance);
+            if (!valid) { _diag.droppedPackets++; continue; }
+
+            const pKey = Math.round(valid.angle * 2) + '|' + Math.round(valid.distance);
+            if (pKey === _lastPacketKey) {
+                setState({ lastDataTime: performance.now() });
+                continue;
+            }
+            _lastPacketKey = pKey;
+
+            const filteredCM = filterData(valid.distance);
+            if (filteredCM === null) {
+                _diag.droppedPackets++;
+                // HARDENING PATCH V18: hook into fail-safe packet storm detector
+                if (state.active && state.isLinked) FAIL_SAFE.trackDrop();
+                continue;
+            }
+
+            _diag.serialPackets++;
+            processIncomingData(valid.angle, filteredCM);
+        } catch(lineErr) {
+            // Silently absorb — never let a single packet crash the pipeline
+            _diag.droppedPackets++;
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────
+// STABILITY FIX: PERIODIC LIGHTWEIGHT GC SWEEP (I5, I6)
+// Runs every 5 minutes. Trims orphaned ghost DOM nodes,
+// resets non-critical caches, and logs health to diag.
+// Does NOT restart loops or touch state — safe at all times.
+// ─────────────────────────────────────────────────
+const LONG_GC_INTERVAL_MS = 5 * 60 * 1000;  // 5 minutes
+
+// HARDENING PATCH: register long GC interval in cleanup registry (A1, A7, I5)
+_cleanupRegistry.addInterval(setInterval(() => {
+    // STABILITY FIX: trim ghost blip transform cache to avoid stale refs
+    // _ghostEls are stable pre-allocated nodes — just reset their opacity
+    // so the next updateGhostBlips() call recalculates cleanly.
+    if (!state.active) {
+        for (let i = 0; i < _ghostEls.length; i++) {
+            _ghostEls[i].style.opacity = '0';
+        }
+    }
+
+    // STABILITY FIX: reset dom diff cache keys to force a clean re-render
+    // on next frame. Prevents stale key collisions over very long sessions.
+    state._lastStatus  = null;
+    state._lastDist    = null;
+    state._lastAngle   = null;
+    state._lastLogDist = null;  // HOTFIX: also reset live log diff cache
+
+    // STABILITY FIX: reset duplicate-packet suppression key so fresh sessions
+    // after a 5-minute idle period don't start with a stale dedup hash.
+    if (!state.active) _lastPacketKey = '';
+
+    // STABILITY FIX: reset FPS diagnostics accumulator to prevent integer overflow
+    _diag._fpsFrames = 0;
+    _diag._fpsLastSec = performance.now();
+
+    // HARDENING PATCH V18: reset fail-safe drop counter on periodic GC
+    // Prevents stale window counts from triggering false storm detection
+    // after long idle periods where no packets were received.
+    if (!state.active) {
+        FAIL_SAFE._dropCountInWindow = 0;
+        FAIL_SAFE._windowStart = 0;
+    }
+
+    _diag.cleanupCount++;
+    console.log('[SENTINEL GC] Sweep complete. Diag:', JSON.stringify({
+        fps:           _diag.fps,
+        packets:       _diag.serialPackets,
+        dropped:       _diag.droppedPackets,
+        reconnects:    _diag.reconnectCount,
+        watchdogReset: _diag.watchdogResets,
+        audioNodes:    _diag.audioNodeCount,
+        cleanups:      _diag.cleanupCount
+    }));
+}, LONG_GC_INTERVAL_MS));
+
+// ─────────────────────────────────────────────────
+// STABILITY FIX: DETACHED DOM ACCUMULATION GUARD (I4)
+// The #ghost-container and #sweep-trail canvas never
+// accumulate beyond their initial allocation because
+// ghost blips are pre-allocated (not created per-frame)
+// and the trail canvas is a single fixed element.
+// This guard runs once on init and verifies the DOM
+// is clean; logs a warning if unexpected children found.
+// ─────────────────────────────────────────────────
+requestAnimationFrame(() => {
+    const gc = document.getElementById('ghost-container');
+    if (gc && gc.children.length > GHOST_COUNT) {
+        console.warn('[SENTINEL] Ghost container has', gc.children.length,
+            'children (expected', GHOST_COUNT, '). Trimming.');
+        while (gc.children.length > GHOST_COUNT) {
+            gc.removeChild(gc.lastChild);
+        }
+    }
+});
+
+// ─────────────────────────────────────────────────
+// WATCHDOG FIX: SYSTEM SELF-RECOVERY WATCHDOG (D1–D8)
+// A secondary watchdog (separate from the signal watchdog
+// inside syncSuccess) monitors the overall system health.
+// If the FSM gets stuck in an invalid transitional state
+// for >10s (e.g. BOOT with no subsequent SCANNING), it
+// resets to OFFLINE and logs a panic event. Safe fallback.
+// ─────────────────────────────────────────────────
+let _fsmStuckTimer = null;
+let _fsmLastState  = FSM.OFFLINE;
+let _fsmLastChange = performance.now();
+
+// HARDENING PATCH: register FSM watchdog interval in cleanup registry (A1, A7, D1)
+_cleanupRegistry.addInterval(setInterval(() => {
+    // WATCHDOG FIX: detect FSM state stuck in transitional states
+    if (fsmState !== _fsmLastState) {
+        _fsmLastState  = fsmState;
+        _fsmLastChange = performance.now();
+        return;
+    }
+    // Only panic if stuck in non-stable states for >10s
+    const transitionalStates = [FSM.BOOT, FSM.ENGAGED, FSM.RECOVER, FSM.COOLDOWN];
+    // PATCH 4: COOLDOWN added — timed state (1.5s), must be watched.
+    // If its cleanup timer is swept mid-flight, FSM stays stuck forever without this guard.
+    if (transitionalStates.includes(fsmState)) {
+        const stuckMs = performance.now() - _fsmLastChange;
+        if (stuckMs > 10000) {
+            _diag.watchdogResets++;
+            console.warn('[SENTINEL WATCHDOG] FSM stuck in', fsmState,
+                'for', Math.round(stuckMs / 1000) + 's — forcing OFFLINE recovery.');
+            updateLog('WATCHDOG: SYSTEM RECOVERY — STATE ' + fsmState);
+            // WATCHDOG FIX: panic-safe fallback — force to OFFLINE cleanly
+            fsmState = FSM.OFFLINE;   // bypass transition guard for panic reset
+            _fsmLastState  = FSM.OFFLINE;
+            _fsmLastChange = performance.now();
+            if (state.firing) {
+                setState({ firing: false, hwAckTimeout: null });
+                document.body.classList.remove('shaking');
+                if (els.overlay) els.overlay.classList.replace('flex', 'hidden');
+            }
+            stopSiren();
+        }
+    }
+}, 2000));  // SURGICAL PATCH 12: closing )) was missing — setInterval ID was NOT being
+            // returned into addInterval(). Registry never stored this handle → sweepAll()
+            // could not cancel the FSM watchdog on panic/unload → zombie watchdog after shutdown.
+
+// ─────────────────────────────────────────────────
+// STABILITY FIX: USB SERIAL HEARTBEAT TIMEOUT (C11)
+// If linked but no bytes received for >8s (not just
+// no valid packets — raw stream silence), trigger
+// disconnect and auto-reconnect. Separate from the
+// signal watchdog which only fires when active+linked.
+// ─────────────────────────────────────────────────
+let _lastRawByteTime = performance.now();
+
+// ─────────────────────────────────────────────────
+// HARDENING PATCH V18: FAIL-SAFE SYSTEM (A — Exhibition Grade)
+// Monitors: serial disconnect, malformed packet storms,
+// stale data freeze, frozen stream.
+// On failure: enters ERROR_RECOVERY state — shows safe
+// warning, preserves radar rendering, auto-recovers.
+// DO NOT crash. DO NOT freeze UI. DO NOT stop rendering.
+// ─────────────────────────────────────────────────
+const FAIL_SAFE = {
+    // Thresholds
+    PACKET_STORM_WINDOW_MS: 1000,   // time window to count drops
+    PACKET_STORM_DROP_LIMIT: 20,    // drops in window = storm
+    STALE_FREEZE_MS: 6000,          // no valid data = freeze detect
+    AUTO_RECOVER_MS: 4000,          // wait before auto-recover attempt
+
+    // Counters
+    _dropCountInWindow: 0,
+    _windowStart: 0,
+    _inErrorRecovery: false,
+    _recoverTimer: null,
+    _lastReason: null,   // SURGICAL PATCH 17: last reason for field diagnostics
+
+    // Enter safe warning state — preserves all rendering
+    enterRecovery(reason) {
+        if (this._inErrorRecovery) return;
+        this._inErrorRecovery = true;
+        // SURGICAL PATCH 17: store last recovery reason for field diagnostics.
+        // _sentinelFailSafeDiag() now includes lastReason so field engineers can
+        // identify which subsystem triggered recovery without reading serial logs.
+        this._lastReason = reason;
+
+        // FSM: try to transition; bypass if already OFFLINE
+        if (fsmState !== FSM.OFFLINE) {
+            // Force ERROR_RECOVERY — bypass normal transition map if needed
+            const prev = fsmState;
+            fsmState = FSM.ERROR_RECOVERY;
+            console.warn('[SENTINEL FAIL-SAFE] Entered ERROR_RECOVERY from', prev, '— Reason:', reason);
+        }
+
+        // Safe warning — no crash, no freeze, radar keeps rendering
+        updateLog('⚠ FAIL-SAFE: ' + reason + ' — RECOVERY MODE');
+        if (els.statusTxt) {
+            setDomText(els.statusTxt, 'ERR', 'text-base font-black text-amber-500 animate-pulse uppercase', '_lastStatus');
+        }
+
+        // Siren off — don't alarm operator unnecessarily during recovery
+        // SURGICAL PATCH 13: only stop siren if system was active — OFFLINE state
+        // means siren is already stopped. Guards against spurious stopSiren() call
+        // during a reconnect window where audioCtx may be in transition.
+        if (fsmState !== FSM.OFFLINE) stopSiren();
+
+        // Auto-recover after delay
+        if (this._recoverTimer) { _cleanupRegistry.clearTimeout(this._recoverTimer); }
+        this._recoverTimer = _cleanupRegistry.addTimeout(setTimeout(() => {
+            this._recoverTimer = null;
+            this.exitRecovery();
+        }, this.AUTO_RECOVER_MS));
+    },
+
+    // Exit safe warning — return to SCANNING if system still active+linked
+    exitRecovery() {
+        if (!this._inErrorRecovery) return;
+        this._inErrorRecovery = false;
+        this._dropCountInWindow = 0;
+
+        if (state.active && state.isLinked && fsmState === FSM.ERROR_RECOVERY) {
+            fsmTransition(FSM.SCANNING);
+            updateLog('FAIL-SAFE: AUTO-RECOVERED — SCAN RESUMED');
+        } else {
+            console.log('[SENTINEL FAIL-SAFE] Exit recovery: system no longer active/linked.');
+        }
+    },
+
+    // Track dropped packets — detect malformed packet storms
+    trackDrop() {
+        const now = performance.now();
+        if (now - this._windowStart > this.PACKET_STORM_WINDOW_MS) {
+            this._windowStart = now;
+            this._dropCountInWindow = 0;
+        }
+        this._dropCountInWindow++;
+        if (this._dropCountInWindow >= this.PACKET_STORM_DROP_LIMIT) {
+            this._dropCountInWindow = 0;
+            this.enterRecovery('PACKET STORM DETECTED');
+        }
+    }
+};
+window._sentinelFailSafe = FAIL_SAFE;  // expose for field debug
+
+// Hook into readSerial — updated on every raw chunk received
+// (see HEARTBEAT PATCH comment in readSerial below)
+// BUG FIX: original created new TextEncoder() on every
+// call — 50 object allocations/sec with GC pressure.
+// Singleton encoder reused for all writes.
+// ─────────────────────────────────────────────────
+const _encoder = new TextEncoder();
+
+// ─────────────────────────────────────────────────
+// SERIAL SAFETY FIX: WRITE MUTEX (C12)
+// Web Serial WritableStreamDefaultWriter does not allow
+// concurrent write() calls — a second write issued before
+// the first resolves throws "WritableStream already has a
+// writer" or hangs indefinitely on Android Chrome OTG.
+// _serialWriteLocked serialises all sendSerial calls.
+// ─────────────────────────────────────────────────
+let _serialWriteLocked = false;
+let _serialWriteQueue  = [];   // pending { cmd, resolve } entries
+
+async function _flushWriteQueue() {
+    if (_serialWriteLocked || _serialWriteQueue.length === 0) return;
+    _serialWriteLocked = true;
+    while (_serialWriteQueue.length > 0) {
+        const { cmd, resolve } = _serialWriteQueue.shift();
+        if (state.usbWriter) {
+            try {
+                await state.usbWriter.write(_encoder.encode(cmd));
+            } catch(e) {
+                updateLog('SERIAL WRITE ERROR.');
+            }
+        }
+        resolve();
+    }
+    _serialWriteLocked = false;
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// UPGRADE E (V17): PACKET INTEGRITY — OUTBOUND CHECKSUM
+// Generates a lightweight XOR checksum appended as *XX to commands.
+// Format: CMD*XX\n where XX = 2-digit hex XOR of all CMD bytes.
+//
+// _checksumEnabled defaults to FALSE for full backward compatibility
+// with V16 Arduino firmware. Set true only when Arduino V17 is confirmed:
+//   window._sentinelEnableChecksum = true;  (from console)
+// or auto-enable: will be set true on SYS_READY from V17 firmware.
+//
+// Legacy commands (no checksum) are always accepted by V17 Arduino too.
+// ─────────────────────────────────────────────────────────────────
+let _checksumEnabled = false;
+
+function computeChecksum(cmd) {
+    // XOR all bytes of the command string
+    let xor = 0;
+    for (let i = 0; i < cmd.length; i++) xor ^= cmd.charCodeAt(i);
+    // Format as 2-digit uppercase hex
+    return xor.toString(16).padStart(2, '0').toUpperCase();
+}
+
+function applyChecksum(cmd) {
+    // Strip trailing newline(s) before computing, then re-append
+    const bare = cmd.replace(/\n$/, '');
+    return bare + '*' + computeChecksum(bare) + '\n';
+}
+
+// Expose to console for field debug and V17 firmware activation
+window._sentinelEnableChecksum  = (v) => { _checksumEnabled = !!v; updateLog('CHECKSUM MODE: ' + (_checksumEnabled ? 'ON (V17)' : 'OFF (LEGACY)')); };
+window._sentinelTestChecksum    = (cmd) => applyChecksum(cmd);
+
+async function sendSerial(cmd) {
+    if (!state.usbWriter) return;
+    // UPGRADE E (V17): apply XOR checksum when enabled (backward compat: default off)
+    if (_checksumEnabled) cmd = applyChecksum(cmd);
+    // SURGICAL PATCH 8: cap write queue depth.
+    // If the port stalls (e.g. Android OTG cable half-pulled), write() never
+    // resolves and the queue grows without bound. Cap at 8 entries — any older
+    // pending command is stale anyway. This prevents unbounded memory growth
+    // during a partial-disconnect without triggering a full disconnectCleanup.
+    if (_serialWriteQueue.length >= 8) {
+        console.warn('[SENTINEL] Write queue full — dropping oldest command.');
+        _serialWriteQueue.shift();   // drop oldest, keep newest
+    }
+    return new Promise(resolve => {
+        _serialWriteQueue.push({ cmd, resolve });
+        _flushWriteQueue();
+    });
+}
+
+// ─────────────────────────────────────────────────
+// USB SERIAL READ LOOP
+// BUG FIX: streamActive guard was reset in a catch block
+// but NOT in a finally block — if the stream ended
+// naturally (done=true without error), streamActive
+// stayed true permanently, blocking all future reads.
+// Fix: reset in finally, always.
+// BUG FIX: buffer overflow was handled with a full wipe
+// (usbBuffer = ""). A valid partial packet that arrived
+// just before overflow was discarded. Fix: trim to last
+// 256 bytes, preserving any recent partial packet.
+// ─────────────────────────────────────────────────
+async function readSerial() {
+    if (!state.port || state._readerActive) return;
+    setState({ _readerActive: true, streamActive: true });
+    // SURGICAL PATCH 7 (continued): TextDecoder is now created fresh per inner
+    // read session inside the outer while-loop below. Removed from here.
+
+    // MEMORY FIX: register heartbeat in cleanup registry so sweepAll() on panic
+    // or beforeunload correctly clears it. Previously it was a raw setInterval
+    // outside the registry — orphaned if disconnectCleanup() ran from outside readSerial.
+    _lastRawByteTime = performance.now();
+    const _heartbeatId = _cleanupRegistry.addInterval(setInterval(() => {
+        if (!state.isLinked) {
+            _cleanupRegistry.clearInterval(_heartbeatId);
+            return;
+        }
+        const silence = performance.now() - _lastRawByteTime;
+        if (silence > 8000) {
+            _cleanupRegistry.clearInterval(_heartbeatId);
+            _diag.watchdogResets++;
+            updateLog('HEARTBEAT TIMEOUT — STREAM STALE. RECONNECTING...');
+            disconnectCleanup();
+        }
+    }, 2000));
+
+    try {
+        while (state.port && state.port.readable && state.isLinked) {
+            // SURGICAL PATCH 7: create a fresh TextDecoder for each inner read session.
+            // The outer while-loop re-acquires the reader lock on each iteration.
+            // A single shared decoder retains its internal partial-byte buffer across
+            // iterations — if the previous session ended mid-multibyte character (common
+            // with HC-SR04 firmware that uses \r\n), the next session inherits corrupted
+            // state and the first decoded chunk is garbage. Fresh decoder = clean state.
+            const decoder = new TextDecoder();
+            state.reader = state.port.readable.getReader();
+            try {
+                while (true) {
+                    const { value, done } = await state.reader.read();
+                    if (done) break;
+
+                    // HEARTBEAT FIX: update timestamp BEFORE the active guard.
+                    // If active=false (pre-INIT), the old code skipped this update
+                    // causing the heartbeat watchdog to fire a spurious 8s disconnect.
+                    _lastRawByteTime = performance.now();
+
+                    if (!state.active) { state.usbBuffer = ''; continue; }
+
+                    let chunk;
+                    try {
+                        chunk = decoder.decode(value, { stream: true });
+                    } catch(decodeErr) {
+                        _diag.droppedPackets++;
+                        continue;
+                    }
+
+                    state.usbBuffer += chunk;
+
+                    if (state.usbBuffer.length > 512) {
+                        state.usbBuffer = state.usbBuffer.slice(-256);
+                    }
+
+                    const lines = state.usbBuffer.split('\n');
+                    state.usbBuffer = lines.pop();
+                    parseLines(lines);
+                }
+            } finally {
+                try { if (state.reader) state.reader.releaseLock(); } catch(e) {}
+            }
+        }
+    } catch(e) {
+        disconnectCleanup();
+    } finally {
+        _cleanupRegistry.clearInterval(_heartbeatId);  // always clear via registry
+        setState({ _readerActive: false, streamActive: false });
+    }
+}
+
+// ─────────────────────────────────────────────────
+// USB CONNECT BUTTON
+// BUG FIX: rapid double-tap could open port twice →
+// "port already open" — unrecoverable error.
+// _usbConnecting flag blocks concurrent opens.
+// ─────────────────────────────────────────────────
+let _usbConnecting = false;
+
+if (els.usbBtn) els.usbBtn.onclick = async () => {
+    if (_usbConnecting) return;
+
+    // BUG FIX: Web Serial not supported in all browsers (iOS Safari, Firefox).
+    // Original had no feature detection — calling navigator.serial.requestPort()
+    // on unsupported browsers throws immediately, leaving UI in broken state.
+    if (!navigator.serial) {
+        updateLog('WEB SERIAL NOT SUPPORTED — USE CHROME/EDGE.');
+        return;
+    }
+
+    _usbConnecting = true;
+    els.usbBtn.disabled = true;
+    let _connected = false;
+    try {
+        state.port = await navigator.serial.requestPort();
+        await state.port.open({ baudRate: 115200 });
+        state.usbWriter = state.port.writable.getWriter();
+        _reconnectAttempts = 0;   // STABILITY FIX: fresh connect resets retry budget
+        _connected = true;
+        syncSuccess('USB OTG LINKED');
+        readSerial();
+    } catch(e) {
+        updateLog('USB FAILED: ' + (e.message || String(e)).slice(0, 60));
+        state.port = null;
+    } finally {
+        _usbConnecting = false;
+        if (!_connected && els.usbBtn) els.usbBtn.disabled = false;
+    }
+};
+
+// ─────────────────────────────────────────────────
+// BLUETOOTH SERIAL SYSTEM
+// Completely separate from USB path.
+// Feeds the SAME parseLines() parser — one pipeline.
+// Uses Web Bluetooth API (Chrome Android supported).
+// HC-05 / HC-06 modules use Nordic UART Service (NUS):
+//   Service UUID : 0x1101  (SPP — Serial Port Profile)
+//   RX Char UUID : received data from Arduino
+// ─────────────────────────────────────────────────
+let _btDevice      = null;
+let _btServer      = null;
+let _btRxChar      = null;
+let _btBuffer      = '';
+let _btConnecting  = false;
+
+// Nordic UART / SPP UUIDs — standard for HC-05 / HC-06
+const _BT_SERVICE_UUID = '00001101-0000-1000-8000-00805f9b34fb';
+const _BT_RX_UUID      = '00001143-0000-1000-8000-00805f9b34fb';
+
+// Called on every BT notification chunk — feeds existing parseLines()
+function _btOnData(event) {
+    const value = event.target.value;
+    const decoder = new TextDecoder();
+    const chunk = decoder.decode(value);
+    _lastRawByteTime = performance.now();
+    if (!state.active) { _btBuffer = ''; return; }
+    _btBuffer += chunk;
+    if (_btBuffer.length > 512) _btBuffer = _btBuffer.slice(-256);
+    const lines = _btBuffer.split('\n');
+    _btBuffer = lines.pop();
+    parseLines(lines);       // ← SAME parser as USB path
+}
+
+function _btOnDisconnect() {
+    _btDevice  = null;
+    _btServer  = null;
+    _btRxChar  = null;
+    _btBuffer  = '';
+    setState({ isLinked: false });
+    setLinkStatus('● LINK: DISCONNECTED', 'text-[7px] text-red-500 font-bold uppercase animate-pulse mt-0.5');
+    updateLog('BLUETOOTH DISCONNECTED.');
+    if (els.btBtn) els.btBtn.disabled = false;
+}
+
+if (els.btBtn) els.btBtn.onclick = async () => {
+    if (_btConnecting) return;
+
+    if (!navigator.bluetooth) {
+        updateLog('WEB BLUETOOTH NOT SUPPORTED — USE CHROME.');
+        return;
+    }
+
+    // If already connected — disconnect
+    if (_btDevice && _btDevice.gatt.connected) {
+        _btDevice.gatt.disconnect();
+        return;
+    }
+
+    _btConnecting = true;
+    els.btBtn.disabled = true;
+    let _btConnected = false;
+    try {
+        // requestDevice() MUST be called directly in user click — user gesture required
+        _btDevice = await navigator.bluetooth.requestDevice({
+            filters: [
+                { name: 'HC-05' },
+                { name: 'HC-06' },
+                { namePrefix: 'HC' },
+                { namePrefix: 'SENTINEL' }
+            ],
+            optionalServices: [_BT_SERVICE_UUID]
+        });
+
+        _btDevice.addEventListener('gattserverdisconnected', _btOnDisconnect);
+
+        _btServer = await _btDevice.gatt.connect();
+        const service = await _btServer.getPrimaryService(_BT_SERVICE_UUID);
+        _btRxChar = await service.getCharacteristic(_BT_RX_UUID);
+        await _btRxChar.startNotifications();
+        _btRxChar.addEventListener('characteristicvaluechanged', _btOnData);
+
+        _btConnected = true;
+        syncSuccess('BLUETOOTH LINKED');
+
+    } catch(e) {
+        updateLog('BT FAILED: ' + (e.message || String(e)).slice(0, 60));
+        _btDevice = null;
+        _btServer = null;
+        _btRxChar = null;
+    } finally {
+        _btConnecting = false;
+        if (!_btConnected && els.btBtn) els.btBtn.disabled = false;
+    }
+};
+
+// ─────────────────────────────────────────────────
+// AUTO-RECONNECT — up to 3 attempts, 2s delay each
+// Uses same port object — no new requestPort() dialog.
+// BUG FIX: original nulled state.port before calling
+// attemptReconnect() — the reconnect function then
+// checked if state.port existed and immediately bailed.
+// Fix: port is preserved via savedPort until reconnect
+// confirms failure, then truly nulled.
+// ─────────────────────────────────────────────────
+let _reconnectAttempts   = 0;
+const MAX_RECONNECT      = 3;
+const RECONNECT_DELAY    = 2000;
+let   _reconnectInProgress = false;
+
+async function attemptReconnect() {
+    if (_reconnectInProgress) return;
+    _reconnectInProgress = true;
+
+    // STABILITY FIX: converted from tail-recursion to iterative loop.
+    // The recursive version grew the async call stack by one frame per retry,
+    // which on slow Android Chrome async schedulers caused a microtask queue
+    // stall on the 3rd attempt. Pure iterative — zero stack growth.
+    while (_reconnectAttempts < MAX_RECONNECT) {
+        if (!state.port) break;
+        if (state.isLinked) {
+            // Manually reconnected during delay window
+            _reconnectAttempts   = 0;
+            _reconnectInProgress = false;
+            return;
+        }
+        _reconnectAttempts++;
+        _diag.reconnectCount++;
+        updateLog('AUTO-RECONNECT ATTEMPT ' + _reconnectAttempts + '/' + MAX_RECONNECT + '...');
+        // SURGICAL PATCH 11: reconnect delay registered in cleanup registry.
+        // Raw Promise+setTimeout was invisible to _cleanupRegistry.sweepAll().
+        // If beforeunload or panic swept all timers mid-delay, the raw setTimeout
+        // still fired 2s later and attempted port.open() against a closed system.
+        // Now registered — sweepAll() on panic/unload correctly cancels the delay.
+        await new Promise(r => {
+            const _rcTimer = _cleanupRegistry.addTimeout(setTimeout(() => {
+                _cleanupRegistry.timeouts.delete(_rcTimer);
+                r();
+            }, RECONNECT_DELAY));
+        });
+        if (state.isLinked) { _reconnectAttempts = 0; _reconnectInProgress = false; return; }
+        try {
+            await state.port.open({ baudRate: 115200 });
+            state.usbWriter      = state.port.writable.getWriter();
+            _reconnectAttempts   = 0;
+            _reconnectInProgress = false;
+            syncSuccess('USB RECONNECTED');
+            readSerial();
+            return;
+        } catch(e) { /* port not ready yet — loop will retry */ }
+    }
+
+    _reconnectAttempts   = 0;
+    _reconnectInProgress = false;
+    state.port           = null;
+    updateLog('AUTO-RECONNECT FAILED — MANUAL RECONNECT NEEDED.');
+    if (els.usbBtn) els.usbBtn.disabled = false;
+}
+
+// ─────────────────────────────────────────────────
+// DISCONNECT CLEANUP
+// BUG FIX: original had no re-entry guard — rapid
+// disconnect events (cable pull during active scan)
+// could call disconnectCleanup() twice simultaneously,
+// double-cancelling the reader (which throws on second
+// cancel) and setting timers twice.
+// ─────────────────────────────────────────────────
+let _disconnecting = false;
+
+async function disconnectCleanup() {
+    if (_disconnecting) return;
+    if (!state.isLinked && !state.streamActive) return;
+    _disconnecting = true;
+
+    fsmTransition(FSM.OFFLINE);
+    _reconnectInProgress = false;
+    stopStaleCheck();
+    stopNoiseLoop();
+    stopSiren();
+
+    setState({
+        isLinked:          false,
+        streamActive:      false,
+        active:            false,
+        hitStable:         0,
+        hasSpoken:         false,
+        autoFireScheduled: false,
+        autoFire:          false,
+        _lastAutoCmd:      null,
+        _readerActive:     false
+    });
+
+    if (state.reader) {
+        try { await state.reader.cancel(); } catch(e) {}
+        try { state.reader.releaseLock();  } catch(e) {}
+        state.reader = null; // FIX: was missing — stale reader ref caused "locked" errors on next connect
+    }
+    if (state.usbWriter) {
+        try { state.usbWriter.releaseLock(); } catch(e) {}
+        state.usbWriter = null;
+    }
+
+    // SURGICAL PATCH 1: close the port after releasing all locks.
+    // Without port.close(), the OS serial device stays held across the entire
+    // disconnect/reconnect cycle. On Android OTG this means the next
+    // port.open() call silently fails with "port already open" even though
+    // we think we've disconnected. Close here; attemptReconnect() will re-open.
+    if (state.port) {
+        try { await state.port.close(); } catch(e) { /* ignore — may already be closed */ }
+    }
+
+    state.usbBuffer = '';
+
+    // HARDENING PATCH: clear watchdog via registry on disconnect (A7, A8, A9)
+    if (state._watchdogTimer) {
+        _cleanupRegistry.clearInterval(state._watchdogTimer);
+        setState({ _watchdogTimer: null });
+    }
+
+    // SERIAL SAFETY FIX: drain write queue on disconnect — prevents stale
+    // queued commands executing against a new session after reconnect (C10, C12)
+    _serialWriteQueue.length = 0;
+    _serialWriteLocked = false;
+
+    // HARDENING PATCH V18: clear fail-safe error recovery on disconnect
+    // Disconnect is handled by disconnectCleanup — fail-safe auto-recover timer
+    // must be cancelled to prevent it from racing with the reconnect flow.
+    if (FAIL_SAFE._recoverTimer) {
+        _cleanupRegistry.clearTimeout(FAIL_SAFE._recoverTimer);
+        FAIL_SAFE._recoverTimer = null;
+    }
+    FAIL_SAFE._inErrorRecovery = false;
+    FAIL_SAFE._dropCountInWindow = 0;
+
+    // Reset spike filter, EMA, hysteresis, and moving average on disconnect
+    resetHistory();
+    _lastPacketKey = '';
+    setState({ _lastAcceptedCM: -1 });
+
+    // Update UI
+    setLinkStatus('● LINK LOST — RECONNECT', 'text-[7px] text-red-500 font-bold uppercase animate-pulse mt-0.5');
+    if (els.powerBtn) {
+        els.powerBtn.disabled  = true;
+        els.powerBtn.className = 'px-4 py-3 panel text-[9px] font-black uppercase text-slate-600 opacity-40 active:scale-95 transition-all shrink-0';
+        els.powerBtn.innerText = 'INIT';
+    }
+    if (els.autoToggle) els.autoToggle.classList.remove('on');
+    updateLog('HARDWARE LINK LOST — RECONNECT.');
+
+    const savedPort = state.port;
+    state.port = null;
+
+    // STABILITY FIX: clear re-entry guard BEFORE calling attemptReconnect.
+    // Old order reset it after — if cable was pulled again during the async
+    // reconnect path, a second disconnectCleanup() would be blocked by the
+    // still-true flag and silently skip all teardown.
+    _disconnecting = false;
+
+    if (savedPort) {
+        state.port = savedPort;
+        attemptReconnect();
+    } else {
+        if (els.usbBtn) els.usbBtn.disabled = false;
+    }
+}
+
+// ─────────────────────────────────────────────────
+// FIRE
+// BUG FIX: state.firing, state.lastFire were mutated
+// directly. Now routed through setState.
+// BUG FIX: firing was allowed when disconnected
+// (state.isLinked not checked). Added guard.
+// HARDENING PATCH: FIRE CONTROL SAFETY (H1–H7)
+// - 2.5s cooldown strictly enforced
+// - Must be locked (hitStable ≥ 5) AND linked
+// - Cannot fire during FSM ENGAGED state
+// - Debounced: _fireDebounceLock prevents double-invocation
+//   within same JS microtask queue flush
+// ─────────────────────────────────────────────────
+let _fireDebounceLock = false;  // HARDENING PATCH: fire debounce (H5)
+
+async function triggerFire() {
+    // HARDENING PATCH: debounce guard — prevents same-tick double-fire (H5)
+    if (_fireDebounceLock) return;
+    _fireDebounceLock = true;
+    // PATCH 6: register in cleanup registry — raw setTimeout was invisible to sweepAll().
+    // If panic/beforeunload swept timers during 100ms window, lock stayed true permanently
+    // after recovery, silently blocking all future manual fire events until page reload.
+    _cleanupRegistry.addTimeout(setTimeout(() => { _fireDebounceLock = false; }, 100));
+
+    const now = performance.now();
+    if (state.firing || !state.active || !state.isLinked) return;
+    // SURGICAL PATCH 2: guard against firing when stream is dead.
+    // isLinked can stay true for up to STALE_TARGET_MS after a physical
+    // cable pull (serial teardown is async). streamActive goes false
+    // immediately when the read loop exits — use it as the strict guard.
+    if (!state.streamActive) return;
+    if (now - state.lastFire < 2500) return;    // 2.5s cooldown
+    // HARDENING PATCH: require hitStable lock before any fire (H4)
+    if (state.hitStable < 5) return;
+    // HARDENING PATCH: abort fire if already in ENGAGED state (H7)
+    if (fsmState === FSM.ENGAGED) return;
+
+    setState({ firing: true, lastFire: now, hwFireOk: null });  // null = ACK pending
+    fsmTransition(FSM.ENGAGED);
+    document.body.classList.add('shaking');
+    if (els.overlay) els.overlay.classList.replace('hidden', 'flex');
+    await sendSerial(PROTOCOL_CMDS.FIRE);  // JS PATCH F (V17): centralized constant
+    updateLog('ENGAGEMENT CMD DISPATCHED — AWAITING HW ACK...');
+    speak('Firing interceptor.', true);
+    vibrate([50, 30, 200]);   // short-long = fire pulse
+
+    // MEMORY FIX: register ACK watchdog in cleanup registry so sweepAll()
+    // on panic/beforeunload correctly cancels it. Raw setTimeout was invisible
+    // to the registry — it would fire after shutdown and corrupt FSM state.
+    const ackWd = _cleanupRegistry.addTimeout(setTimeout(() => {
+        _cleanupRegistry.timeouts.delete(ackWd);   // self-remove after firing
+        if (state.hwFireOk === null && state.firing) {
+            setState({ hwFireOk: false });
+            updateLog('⚠ HW TIMEOUT: NO RELAY ACK — CHECK CONNECTION');
+            setState({ firing: false });
+            document.body.classList.remove('shaking');
+            if (els.overlay) els.overlay.classList.replace('flex', 'hidden');
+            fsmTransition(FSM.RECOVER);
+            fsmTransition(FSM.SCANNING);
+        }
+    }, HW_ACK_TIMEOUT_MS));
+    setState({ hwAckTimeout: ackWd });
+}
+
+// BUG FIX: closeImpact used direct state.x = y mutations.
+// All routed through setState. FSM transition added.
+// JS PATCH D (V17): COOLDOWN gate — 1.5s timed window between ENGAGED and SCANNING.
+// Prevents operator from re-engaging immediately after a fire event.
+// Uses cleanup registry so sweepAll() on panic cancels the cooldown timer cleanly.
+window.closeImpact = () => {
+    if (els.overlay) els.overlay.classList.replace('flex', 'hidden');
+    document.body.classList.remove('shaking');
+    setState({
+        firing:            false,
+        hitStable:         0,
+        hasSpoken:         false,
+        autoFireScheduled: false
+    });
+    stopSiren();
+    fsmTransition(FSM.COOLDOWN);
+    updateLog('COOLDOWN ACTIVE — 1.5s BEFORE NEXT SCAN CYCLE');
+    // JS PATCH D (V17): registered in cleanup registry — safe on shutdown/panic
+    _cleanupRegistry.addTimeout(setTimeout(() => {
+        fsmTransition(FSM.SCANNING);
+        updateLog('COOLDOWN COMPLETE — SCAN ACTIVE');
+    }, 1500));
+};
+
+// ─────────────────────────────────────────────────
+// AUTO-FIRE TOGGLE
+// ─────────────────────────────────────────────────
+function toggleAutoFire() {
+    if (!state.active) return;
+    const next = !state.autoFire;
+    setState({ autoFire: next });
+    // JS PATCH C (V17): AUTO/MANUAL SYNC — removed optimistic classList.toggle() here.
+    // V16 updated the toggle UI immediately without waiting for firmware confirmation,
+    // which could show "AUTO" visually while the Arduino was still in MANUAL state.
+    // handleHardwareAck('AUTO_ON') and handleHardwareAck('AUTO_OFF') now exclusively
+    // own the toggle visual state — they update only after firmware ACK arrives.
+    // If ACK never comes (bad cable), UI stays in old state — honest feedback to operator.
+    const cmd = next ? PROTOCOL_CMDS.AUTO_ON : PROTOCOL_CMDS.AUTO_OFF;  // JS PATCH F (V17)
+    sendSerial(cmd);
+    setState({ _lastAutoCmd: next ? 'A' : 'M' });   // dedup sync
+    speak(next
+        ? 'Auto-fire circuit armed. Engaging autonomously.'
+        : 'Auto-fire disabled. Manual mode active.', true);
+    updateLog(next
+        ? 'AUTO-FIRE CMD SENT · AWAITING HW ACK (AUTO_ON)'
+        : 'MANUAL MODE CMD SENT · AWAITING HW ACK (AUTO_OFF)');
+}
+
+// ─────────────────────────────────────────────────
+// BLIP POLAR POSITION
+// BUG FIX: Original called offsetWidth inside updateBlipPosition
+// every locked frame (30fps) → forced layout reflow each frame.
+// Fix: cached on first call, invalidated on resize only.
+// ─────────────────────────────────────────────────
+let _cachedRadarSize = 0;
+
+// BUG FIX: _noiseCanvas resize handler was here — merged into the sweep-trail
+// resize handler above to avoid two separate resize listener registrations.
+
+function updateBlipPosition(angleDeg, distFt) {
+    if (!_cachedRadarSize) {
+        _cachedRadarSize = els.radarCircle ? els.radarCircle.offsetWidth : 180;
+    }
+    const radius    = _cachedRadarSize / 2;
+    const distRatio = Math.min(distFt / state.maxRange, 0.93);
+    const r         = distRatio * radius;
+    const rad       = ((angleDeg - 90) * Math.PI) / 180;
+    const x         = radius + r * Math.cos(rad);
+    const y         = radius + r * Math.sin(rad);
+    // PATCH 5: use transform:translate() instead of left/top — stays on compositor thread.
+    // left/top trigger layout recalculation every 30fps on Android Chrome (expensive).
+    // translate() is GPU-composited: zero layout cost, smoother on low-end devices.
+    els.blip.style.left      = '0';
+    els.blip.style.top       = '0';
+    els.blip.style.transform = 'translate(' + x + 'px, ' + y + 'px)';
+}
+
+// ─────────────────────────────────────────────────
+// RENDER LOOP — requestAnimationFrame
+// Visual interpolation runs every frame (smooth).
+// DOM text/class writes throttled to 30fps (~33ms).
+// Tab-hidden: rAF is scheduled but all work is skipped
+// to prevent background CPU spin on Android.
+// BUG FIX: original scheduled rAF at the END of render().
+// If render() threw an exception the next frame was never
+// scheduled, killing the loop permanently. Fix: schedule
+// FIRST thing, then do all fallible work.
+// BUG FIX: visibilitychange called requestAnimationFrame(render)
+// on tab-resume even though render() already reschedules itself
+// unconditionally — after the first tab-switch this created two
+// concurrent rAF chains running in parallel, doubling CPU load.
+// Fix: _rafLoopRunning flag ensures only one chain exists at a time.
+// ─────────────────────────────────────────────────
+let _rafLoopRunning = false;
+// HARDENING PATCH: Frame pacing timestamp for 120fps cap (B2, F3)
+let _lastRenderFrameMs = 0;
+
+function render(timestamp) {
+    // FIX: reset flag BEFORE rescheduling — if requestAnimationFrame() itself
+    // throws (browser OOM), _rafLoopRunning stays false so watchdog can restart.
+    _rafLoopRunning = false;
+    requestAnimationFrame(render);  // reschedule first — loop cannot die from exceptions below
+    _rafLoopRunning = true;         // mark running again after successful schedule
+
+    // SURGICAL PATCH 10: honour _rafPaused flag in addition to document.hidden.
+    // visibilitychange sets _rafPaused=true on hide but the render() loop only checked
+    // document.hidden — fine for most cases, but _rafPaused is also set during
+    // explicit manual pause paths. Using both guards ensures zero CPU spin on pause.
+    if (document.hidden || state._rafPaused) return;
+
+    // HARDENING PATCH: FPS DIAGNOSTICS + ADAPTIVE QUALITY (J, F, B2)
+    _diag._fpsFrames++;
+    const nowMs = timestamp || performance.now();
+    if (nowMs - _diag._fpsLastSec >= 1000) {
+        _diag.fps       = _diag._fpsFrames;
+        _diag._fpsFrames = 0;
+        _diag._fpsLastSec = nowMs;
+        _diag.activeTimers = _cleanupRegistry.intervals.size + _cleanupRegistry.timeouts.size;
+        _diag.activeRafs   = _cleanupRegistry.rafs.size;
+        // HARDENING PATCH: detect low FPS — activate degraded mode under 20fps
+        _adaptiveLowFps = (_diag.fps > 0 && _diag.fps < 20);
+    }
+
+    // HARDENING PATCH: FRAME PACING — skip rAF frames over 120fps cap (B2)
+    // Prevents excessive GPU overdraw on high-refresh displays.
+    if (timestamp && _lastRenderFrameMs && (timestamp - _lastRenderFrameMs) < 6) return;
+    _lastRenderFrameMs = timestamp;
+
+    // Smooth visual interpolation — every frame
+    // JS PATCH 7: SERVO ↔ FRONTEND SWEEP SYNC
+    // targetAngle is the AUTHORITATIVE source — set directly from firmware serial packet.
+    // visualAngle is display-only smoothed interpolation. Large jumps (>90°) snap
+    // immediately to prevent the visual lagging behind servo direction reversal for
+    // multiple frames (drift). Small movements use 0.12 lerp for smooth animation.
+    // clamp to [0,180] prevents floating-point drift past physical servo limits.
+    // JS PATCH E (V17): all direct state.x = y mutations replaced with setState().
+    // render() is called at rAF rate (~60fps) — raw property writes bypassed setState's
+    // diff tracking, causing _lastStatus/_lastDist caches to desync from actual values
+    // and producing missed DOM updates on low-fps devices where the 33ms throttle
+    // and the raw write raced on the same tick.
+    const angleDiff = state.targetAngle - state.visualAngle;
+    if (Math.abs(angleDiff) > 90) {
+        // JS PATCH 7: snap on large delta — servo reversed direction at sweep end.
+        setState({ visualAngle: state.targetAngle });
+    } else {
+        setState({ visualAngle: state.visualAngle + angleDiff * 0.12 });
+    }
+    // JS PATCH 7: clamp — prevents float drift past physical servo range
+    setState({ visualAngle: Math.max(0, Math.min(180, state.visualAngle)) });
+    // STABILITY FIX: clamp visualDist to ≥0.
+    setState({ visualDist: Math.max(0, state.visualDist + (state.targetDist - state.visualDist) * 0.1) });
+
+    // Sweep transform — every frame for smooth animation
+    // BUG FIX: style.opacity was written every frame unconditionally.
+    // Cached to skip redundant style writes.
+    const wantOpacity = state.active ? '1' : '0';
+    if (els.sweep && els.sweep._cachedOpacity !== wantOpacity) {
+        els.sweep._cachedOpacity = wantOpacity;
+        els.sweep.style.opacity  = wantOpacity;
+    }
+    if (state.active && els.sweep) {
+        // Subtle ±0.4° hardware jitter — makes sweep feel like a real antenna
+        const jitter = (Math.random() - 0.5) * 0.8;
+        els.sweep.style.transform = 'rotate(' + ((state.visualAngle - 90 + jitter).toFixed(2)) + 'deg)';
+        // Sweep persistence trail — phosphor CRT fading effect
+        renderSweepTrail(state.visualAngle);
+    }
+
+    // DOM writes throttled to 30fps
+    const now = timestamp || performance.now();
+    if (now - state._lastRenderMs < 33) return;
+    setState({ _lastRenderMs: now });
+
+    if (state.active) {
+        const angleStr = state.visualAngle.toFixed(1) + '°';
+        setDomText(els.angleTxt, angleStr, undefined, '_lastAngle');
+
+        const inRange = _hystInRange;   // use hysteresis gate — same state as data pipeline
+        const locked  = inRange && state.hitStable >= 5;
+
+        if (locked) {
+            if (els.blip) {
+                els.blip.classList.remove('hidden');
+                els.blip.classList.add('blip-active');
+            }
+            updateBlipPosition(state.targetAngle, state.targetDist);
+
+            const distStr = state.targetDist.toFixed(1) + ' FT / ' + Math.round(state.targetDist / 0.0328084) + ' CM';
+            setDomText(els.distTxt,   distStr,  'text-base font-black text-red-500 animate-pulse uppercase', '_lastDist');
+            setDomText(els.statusTxt, 'LOCKED', 'text-base font-black text-red-500 animate-pulse uppercase', '_lastStatus');
+
+            if (!state.hasSpoken) {
+                setState({ hasSpoken: true });
+                speak('Target locked. Threat detected.', false);
+                startSiren();
+                vibrate([30, 20, 30, 20, 80]);  // tactical lock pulse pattern
+                updateLog('TARGET LOCKED — ' + distStr);
+            }
+
+            // HOTFIX BUG 1: continuously push live distance into ai-log while LOCKED.
+            // Rounds to nearest CM before diffing — prevents log thrash at 30fps.
+            // Distinct prefix 'LCK' so it never collides with SCAN branch key.
+            // BUG #2 FIX: format now matches directive spec — includes CM and AZIMUTH.
+            {
+                const _logCM  = Math.round(state.targetDist / 0.0328084);
+                const _logAz  = Math.round(state.targetAngle);
+                const _logKey = 'LCK|' + _logCM + '|' + _logAz;
+                // FIX: don't overwrite slider "RANGE WINDOW" message for 2s
+                if (state._lastLogDist !== _logKey &&
+                    (performance.now() - _sliderLogOverrideMs) > SLIDER_LOG_HOLD_MS) {
+                    setState({ _lastLogDist: _logKey });
+                    updateLog('TARGET DETECTED · ' + _logCM + 'CM · AZIMUTH ' + _logAz + '°');
+                }
+            }
+
+            if (state.autoFire && !state.firing && !state.autoFireScheduled) {
+                setState({ autoFireScheduled: true });
+                // SURGICAL PATCH 3: raw setTimeout was orphaned on shutdown/disconnect.
+                // sweepAll() in beforeunload/panic missed it. Now registered so it
+                // gets cancelled cleanly if the system powers off during the 600ms delay.
+                const _afTimer = _cleanupRegistry.addTimeout(setTimeout(() => {
+                    _cleanupRegistry.timeouts.delete(_afTimer);
+                    setState({ autoFireScheduled: false });
+                    if (state.active && state.hitStable >= 5 && !state.firing && state.isLinked
+                            && state.streamActive
+                            && fsmState !== FSM.ENGAGED && fsmState !== FSM.OFFLINE) {
+                        triggerFire();
+                    }
+                }, 600));
+            }
+
+        } else {
+            if (els.blip) {
+                els.blip.classList.add('hidden');
+                els.blip.classList.remove('blip-active');
+            }
+            const distStr = state.visualDist > 0.1 ? state.visualDist.toFixed(1) + ' FT / ' + Math.round(state.visualDist / 0.0328084) + ' CM' : '---';
+            setDomText(els.distTxt,   distStr, 'text-base font-black text-slate-500 uppercase', '_lastDist');
+            setDomText(els.statusTxt, 'SCAN',  'text-base font-black text-cyan-500 uppercase',  '_lastStatus');
+
+            // HOTFIX BUG 1: continuously push live distance into ai-log while SCANNING.
+            // Only updates when rounded CM value changes to prevent 30fps log thrash.
+            // Distinct prefix 'SCN' so it never collides with LOCKED branch key.
+            // BUG #2 FIX: format upgraded — includes CM and AZIMUTH per directive spec.
+            if (state.visualDist > 0.1) {
+                const _logCM  = Math.round(state.visualDist / 0.0328084);
+                const _logAz  = Math.round(state.visualAngle);
+                const _logKey = 'SCN|' + _logCM + '|' + _logAz;
+                // FIX: don't overwrite slider "RANGE WINDOW" message for 2s
+                if (state._lastLogDist !== _logKey &&
+                    (performance.now() - _sliderLogOverrideMs) > SLIDER_LOG_HOLD_MS) {
+                    setState({ _lastLogDist: _logKey });
+                    updateLog('SCANNING · ' + _logCM + 'CM · AZIMUTH ' + _logAz + '°');
+                }
+            } else {
+                const _logKey = 'SCN0|' + state.maxRange;
+                // FIX: don't overwrite slider "RANGE WINDOW" message for 2s
+                if (state._lastLogDist !== _logKey &&
+                    (performance.now() - _sliderLogOverrideMs) > SLIDER_LOG_HOLD_MS) {
+                    setState({ _lastLogDist: _logKey });
+                    updateLog('SCANNING · RANGE: ' + state.maxRange + ' FT / ' + Math.round(state.maxRange / 0.0328084) + ' CM');
+                }
+            }
+        }
+
+    } else {
+        if (els.blip) {
+            els.blip.classList.add('hidden');
+            els.blip.classList.remove('blip-active');
+        }
+        setDomText(els.distTxt,   '---', 'text-base font-black text-slate-600 uppercase', '_lastDist');
+        setDomText(els.statusTxt, 'OFF', 'text-base font-black text-slate-600 uppercase', '_lastStatus');
+        // SYNC FIX: when system is OFF, show standby+range in ai-log (diff-suppressed).
+        // Key includes maxRange so it updates immediately when slider changes while off.
+        // Replaces the bare null-reset so the log always reflects the current range setting.
+        {
+            const _standbyKey = 'STBY|' + state.maxRange;
+            if (state._lastLogDist !== _standbyKey) {
+                setState({ _lastLogDist: _standbyKey });
+                if (state.isLinked) {
+                    updateLog('STANDBY · RANGE: ' + state.maxRange + ' FT / ' + Math.round(state.maxRange / 0.0328084) + ' CM');
+                }
+            }
+        }
+    }
+
+    // Fire button — restyle only when canFire state changes
+    const canFire = state.active && state.hitStable >= 5 && !state.firing && state.isLinked;
+    if (state._lastCanFire !== canFire) {
+        setState({ _lastCanFire: canFire });
+        if (els.fireBtn) {
+            els.fireBtn.disabled  = !canFire;
+            els.fireBtn.className = canFire
+                ? 'flex-1 py-3 bg-red-600 rounded text-white font-black text-[9px] uppercase animate-pulse shadow-[0_0_14px_red] active:scale-95 transition-all'
+                : 'flex-1 py-3 bg-slate-800/40 rounded border border-white/5 text-[9px] font-black uppercase tracking-widest text-slate-600 active:scale-95 transition-all';
+            // BUG FIX: className wipe removed hold-ring from DOM.
+            // Re-inject hold-ring after every className reset.
+            if (!els.fireBtn.querySelector('#hold-ring')) {
+                const ring = document.createElement('div');
+                ring.id = 'hold-ring';
+                ring.style.cssText = 'position:absolute;bottom:0;left:0;height:3px;width:0%;background:var(--danger);box-shadow:0 0 5px var(--danger);border-radius:0 2px 2px 0;pointer-events:none;';
+                els.fireBtn.appendChild(ring);
+                _holdRingEl = ring;     // update cached ref
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────
+// POWER BUTTON
+// BUG FIX: 300ms debounce prevents rapid double-tap
+// race condition on state.active.
+// BUG FIX: AudioContext.resume() called without checking
+// if audioCtx was initialised — threw if initAudio()
+// had not yet been called.
+// ─────────────────────────────────────────────────
+let _powerBtnLocked = false;
+
+if (els.powerBtn) els.powerBtn.onclick = () => {
+    if (_powerBtnLocked) return;
+    _powerBtnLocked = true;
+    setTimeout(() => { _powerBtnLocked = false; }, 300);
+
+    initAudio();
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+
+    const turningOn = !state.active;
+
+    if (turningOn) {
+        if (els.powerBtn) els.powerBtn.disabled = true;   // block during boot
+        speak('Initialising system.', true);
+        runBootSequence(() => {
+            setState({ active: true });
+            fsmTransition(FSM.SCANNING);
+            if (els.powerBtn) {
+                els.powerBtn.disabled  = false;
+                els.powerBtn.innerText = 'STOP';
+                els.powerBtn.className = 'px-4 py-3 panel text-[9px] font-black uppercase text-red-500 active:scale-95 transition-all shrink-0';
+            }
+            speak('System operational. Scanning.', true);
+            updateLog('SCAN ACTIVE.');
+            startStaleCheck();
+            startNoiseLoop();
+        });
+        return;
+    }
+
+    // Turning OFF
+    fsmTransition(FSM.OFFLINE);
+    stopSiren();
+    stopStaleCheck();
+    stopNoiseLoop();
+    _holdClear();   // BUG FIX: cancel any in-progress hold-to-fire on system stop
+    setState({
+        active:            false,
+        hitStable:         0,
+        hasSpoken:         false,
+        autoFire:          false,
+        autoFireScheduled: false,
+        _lastAutoCmd:      null
+    });
+    resetHistory();
+    _lastPacketKey = '';
+    setState({ _lastAcceptedCM: -1 });
+    if (els.autoToggle) els.autoToggle.classList.remove('on');
+    sendSerial(PROTOCOL_CMDS.AUTO_OFF);  // JS PATCH F (V17): centralized constant
+    if (els.powerBtn) {
+        els.powerBtn.innerText = 'INIT';
+        els.powerBtn.className = 'px-4 py-3 panel text-[9px] font-black uppercase text-cyan-400 active:scale-95 transition-all shrink-0';
+    }
+    speak('System offline. Standby.', true);
+    // SYNC FIX: include selected range in shutdown log so operator sees current
+    // threshold even after system stops. Matches directive "standby + selected range".
+    updateLog('SYSTEM OFF · STANDBY · RANGE: ' + state.maxRange + ' FT / ' + Math.round(state.maxRange / 0.0328084) + ' CM');
+};
+
+// ─────────────────────────────────────────────────
+// FIRE BUTTON — hold-to-fire listeners
+// BUG FIX: addEventListener was called AFTER els.fireBtn
+// was referenced — safe here since DOM is fully parsed.
+// BUG FIX: touchstart + mousedown both fired on mobile touch
+// (300ms ghost click), starting two hold timers.
+// _holdStart_fn now guards with `if (_holdTimer) return`.
+// ─────────────────────────────────────────────────
+if (els.fireBtn) {
+    els.fireBtn.addEventListener('mousedown',   _holdStart_fn);
+    els.fireBtn.addEventListener('touchstart',  _holdStart_fn, { passive: true });
+    els.fireBtn.addEventListener('mouseup',     _holdClear);
+    els.fireBtn.addEventListener('mouseleave',  _holdClear);
+    els.fireBtn.addEventListener('touchend',    _holdClear,    { passive: true });
+    els.fireBtn.addEventListener('touchcancel', _holdClear,    { passive: true });
+}
+
+// ─────────────────────────────────────────────────
+// RANGE SLIDER — debounced serial sync
+// ─────────────────────────────────────────────────
+// FIX: Slider log override timestamp — prevents render loop from
+// overwriting the "RANGE WINDOW" message for 2 seconds after slider moves.
+// Without this, the render loop's 33ms _lastLogDist update immediately
+// replaces the slider message before the user can read it.
+let _sliderLogOverrideMs = 0;
+const SLIDER_LOG_HOLD_MS = 2000;
+
+let rangeDebounceTimer = null;
+
+if (els.rangeSld) {
+    els.rangeSld.oninput = (e) => {
+        const ft = parseFloat(e.target.value);
+        if (!Number.isFinite(ft)) return;   // BUG FIX: guard against NaN from malformed slider
+        setState({ maxRange: ft });
+        // BUG #1 FIX: write FT and CM to their individual spans (range-val / range-cm).
+        // Previously wrote "7 FT / 213 CM" as a single innerText blob to range-val,
+        // which is fragile — the static text node " FT / " and "CM" suffix lived inside
+        // the JS string rather than the DOM, making them invisible to layout engines.
+        // Now range-val holds only the numeric FT value; range-cm holds only CM.
+        if (els.rangeVal) els.rangeVal.innerText = ft;
+        if (els.rangeCm)  els.rangeCm.innerText  = Math.round(ft / 0.0328084);
+
+        // HOTFIX BUG 2: hysteresis gate stores a cached in/out boolean (_hystInRange).
+        // When maxRange changes, the old cached state is stale — a target previously
+        // marked "in-range" at the old threshold may now be outside the new threshold
+        // (or vice-versa) but _hystInRange won't update until the next data packet.
+        // Force a re-evaluation by resetting _hystInRange to false so the gate
+        // re-enters the "enter threshold" check on the very next incoming packet.
+        // Also clear the DOM diff caches so the display updates immediately on next render
+        // rather than waiting for a new unique value.
+        _hystInRange = false;
+        setState({ _lastDist: null, _lastStatus: null, _lastLogDist: null });
+
+        // FIX: set override timestamp — render loop will not overwrite for 2s
+        _sliderLogOverrideMs = performance.now();
+
+        // HOTFIX BUG 2: log the updated range so the operator sees confirmation.
+        // Format matches directive spec: "RANGE WINDOW XFT / YCM · [current status]"
+        {
+            const _cm = Math.round(ft / 0.0328084);
+            const _status = state.isLinked
+                ? (state.active ? 'SCANNING' : 'STANDBY')
+                : 'AWAITING HARDWARE HANDSHAKE';
+            updateLog('RANGE WINDOW ' + ft + 'FT / ' + _cm + 'CM · ' + _status);
+        }
+
+        // HARDENING PATCH: clear previous debounce via registry (A1, A7)
+        if (rangeDebounceTimer) { _cleanupRegistry.clearTimeout(rangeDebounceTimer); }
+        rangeDebounceTimer = _cleanupRegistry.addTimeout(setTimeout(() => {
+            rangeDebounceTimer = null;
+            const cm = Math.round(ft / 0.0328084);
+            sendSerial(PROTOCOL_CMDS.RANGE_PFX + cm + '\n');  // JS PATCH F (V17)
+            updateLog('RANGE SYNC → NodeMCU: ' + cm + ' CM (' + ft + ' FT)');
+        }, 400));
+    };
+}
+
+// ─────────────────────────────────────────────────
+// STABILITY FIX: BEFOREUNLOAD SAFE SHUTDOWN (A8)
+// Ensures all audio, serial locks, and scan loops are
+// cleanly terminated when the tab or browser closes.
+// Prevents zombie AudioContext / orphaned stream locks
+// in the browser process after page unload.
+// ─────────────────────────────────────────────────
+window.addEventListener('beforeunload', () => {
+    // STABILITY FIX: sweep all registered timers/RAFs
+    _cleanupRegistry.sweepAll();
+    // SURGICAL PATCH 14: mark RAF loop as stopped after sweepAll() clears all RAFs.
+    // If beforeunload is cancelled (user stays on page), the watchdog inside
+    // syncSuccess checks _rafLoopRunning to decide whether to restart the render chain.
+    // Without this reset it sees true (never cleared) and skips the restart → frozen radar.
+    _rafLoopRunning = false;
+    // HARDENING PATCH V18: clear fail-safe recovery state on unload
+    FAIL_SAFE._inErrorRecovery = false;
+    FAIL_SAFE._dropCountInWindow = 0;
+    // STABILITY FIX: stop siren audio cleanly
+    stopSiren();
+    // STABILITY FIX: drain write queue — no more commands after this
+    _serialWriteQueue.length = 0;
+    _serialWriteLocked = false;
+    // STABILITY FIX: release any held serial locks before page dies
+    if (state.reader) {
+        try { state.reader.cancel(); } catch(e) {}
+        try { state.reader.releaseLock(); } catch(e) {}
+    }
+    if (state.usbWriter) {
+        try { state.usbWriter.releaseLock(); } catch(e) {}
+    }
+    // STABILITY FIX: close AudioContext to release audio hardware
+    if (audioCtx && audioCtx.state !== 'closed') {
+        try { audioCtx.close(); } catch(e) {}
+    }
+    // STABILITY FIX: cancel speech synthesis queue
+    if (window.speechSynthesis) {
+        try { window.speechSynthesis.cancel(); } catch(e) {}
+    }
+});
+
+// ─────────────────────────────────────────────────
+// START RENDER LOOP
+// BUG FIX: _rafLoopRunning set here so visibilitychange
+// handler knows the chain is already alive and does not
+// stack a second one on the first tab-resume.
+// SURGICAL PATCH 16: pageshow event re-seeds the rAF chain if beforeunload
+// swept the RAF and the user navigated back (bfcache restore) or cancelled
+// the unload. Without this the render loop stays dead after a cancelled unload.
+// ─────────────────────────────────────────────────
+window.addEventListener('pageshow', (e) => {
+    // bfcache restore (persisted=true) OR cancelled beforeunload
+    if (!_rafLoopRunning && !document.hidden) {
+        _rafLoopRunning = true;
+        requestAnimationFrame(render);
+        console.log('[SENTINEL] pageshow: render chain reseeded.');
+    }
+}, { passive: true });
+_rafLoopRunning = true;
+requestAnimationFrame(render);
+
+// Initialise realism systems after first paint
+// (offsetWidth is only reliable after layout)
+requestAnimationFrame(() => {
+    initRadarRealism();
+    initSweepTrail();   // phosphor persistence trail
+});
+
+// HARDENING PATCH: expose full diag + registry counts to console (J)
+// Access via window._sentinelDiag — already assigned above.
+// Additionally expose registry size query and filter state for field debug:
+window._sentinelRegistrySize = () => ({
+    intervals: _cleanupRegistry.intervals.size,
+    timeouts:  _cleanupRegistry.timeouts.size,
+    rafs:      _cleanupRegistry.rafs.size
+});
+window._sentinelFilterState = () => ({
+    emaValue:      _emaValue.toFixed(2) + ' cm',
+    emaVariance:   _emaVariance.toFixed(2) + ' cm²',
+    hystInRange:   _hystInRange,
+    lastPacketKey: _lastPacketKey
+});
+
+// HARDENING PATCH V18: expose fail-safe diagnostics for field debug
+window._sentinelFailSafeDiag = () => ({
+    inErrorRecovery:    FAIL_SAFE._inErrorRecovery,
+    dropCountInWindow:  FAIL_SAFE._dropCountInWindow,
+    fsmState:           fsmState,
+    recoverTimerActive: !!FAIL_SAFE._recoverTimer,
+    lastReason:         FAIL_SAFE._lastReason   // SURGICAL PATCH 17
+});
+</script>
+</body>
+</html>

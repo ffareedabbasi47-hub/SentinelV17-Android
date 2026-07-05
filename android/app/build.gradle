@@ -1,0 +1,33 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace 'com.fardeen.sentinel'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.fardeen.sentinel"
+        minSdk 26        // USB Host API works from API 12+; 26 chosen so the adaptive launcher icon resolves cleanly
+        targetSdk 34
+        versionCode 1
+        versionName "17.0-usbotg"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+}
+
+dependencies {
+    // ── ONLY dependency added, per contract: required for Android USB Host support ──
+    // Handles CDC-ACM (genuine Arduino Uno/Leonardo/Mega/Due) plus common clone-board
+    // chips (CH340/CH341, CP210x, FTDI, PL2303) so any Arduino over a USB-OTG cable works.
+    implementation 'com.github.mik3y:usb-serial-for-android:3.7.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+}
